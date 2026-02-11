@@ -1,0 +1,98 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &7025595866999247900
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1933318026145583455}
+  - component: {fileID: 8382329712324439892}
+  m_Layer: 0
+  m_Name: Game Manager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1933318026145583455
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7025595866999247900}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0.28408086, y: 0.83271337, z: 1.0256871}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &8382329712324439892
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7025595866999247900}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f3e6c4ae90d6cbb4c985d2abdaacf3ac, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  visual:
+    slideSpeedThresholdEnter: 0.03
+    slideSpeedThresholdExit: 0.015
+    defaultRoughness: 0.5
+    roughnessSmoothingSeconds: 0.12
+    latencyMsAt1: 100
+    lagGainAt1: 0.12
+    maxLagAt1: 0.02
+    tremorAmpAt1: 0.006
+    tremorAmpPerSpeed: 0.0017
+    tremorAmpMax: 0.007
+    tremorHzRange: {x: 12, y: 26}
+    glideAccel: 18
+    glideFrictionAt0: 0.12
+    glideFrictionNear05: 1.5
+    glideMaxOffsetAt0: 0.12
+    glideDeadzoneSpeed: 0.01
+    glideReturnRate: 8
+    maxEffectOffset: 0.08
+    velocityLowpassHz: 8
+  audio:
+    masterGain: 0.33
+    speedRef: 0.6
+    attackSmoothSec: 0.02
+    releaseSmoothSec: 0.06
+    smoothVolByR: {x: 0.25, y: 0.5}
+    lowpassHzByR: {x: 2000, y: 12000}
+    lowpassHzBySpeed: {x: 0, y: 3000}
+    glideAMHz: {x: 0.7, y: 2}
+    glideAMDepth: 0.15
+    smoothLayerLowpassHz: 10000
+    roughVolByR: {x: 0, y: 0.05}
+    jitterHzByR: {x: 10, y: 30}
+    jitterDepth: 0.18
+    roughLowpassHz: {x: 4000, y: 12000}
+    roughDriveAt1: 0.3
+    enableGrainAccents: 1
+    grainRateHz: {x: 40, y: 180}
+    grainTauSec: {x: 0.0025, y: 0.008}
+    grainBandHz: {x: 2500, y: 6500}
+    grainBandwidthHz: {x: 1200, y: 3500}
+    grainLevel: 0.25
+    bassBoost: 0.8
+    midBoost: 0.6
+    bassFreq: 300
+    midFreq: 1500
+    playSpeedThreshold: 0.012
+    controlRateHz: 40
+    impactClick: 1
+    impactMaxHz: 6000
+    impactTauSec: 0.012
+    impactLevel: 0.18
