@@ -12186,7 +12186,7 @@ MonoBehaviour:
   debugMode: 0
   debugAVCouplingMode: 1
   participantCount: 30
-  trialsPerParticipant: 12
+  trialsPerParticipant: 13
   randomSeed: 12345
   testSurface: {fileID: 1439570928}
   leftHandTextureDriver: {fileID: 5327992782894041724}

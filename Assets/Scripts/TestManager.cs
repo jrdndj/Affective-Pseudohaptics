@@ -22,13 +22,14 @@ public struct TrialCondition
 {
     public SensoryMode mode;
     public SurfaceType surface;
-    // A–L anonymized code used during the trial (same for all participants)
+    // A–L + M anonymized codes used during the trial (same for all participants)
     public string code;
 }
 
 /// <summary>
 /// Manages trial sequences for participants with balanced conditions and sensory mode gating.
 /// Supports debug mode for quick testing and normal mode with Latin-square ordering.
+/// 13 conditions: 12 factorial (3×4) coded A–L plus one neutral baseline coded M.
 /// </summary>
 [DefaultExecutionOrder(12000)]
 public class TestManager : MonoBehaviour
@@ -41,7 +42,7 @@ public class TestManager : MonoBehaviour
 
     [Header("Participants / Trials")]
     public int participantCount = 30;
-    public int trialsPerParticipant = 12;  // Fixed at 12 conditions (3 modes × 4 surfaces)
+    public int trialsPerParticipant = 13;  // Fixed: 12 (3×4) + 1 neutral baseline (M)
     public int randomSeed = 12345;
 
     [Header("Target Test Object")]
@@ -136,8 +137,14 @@ public class TestManager : MonoBehaviour
     // _trialsByParticipant[participant][trial]
     private TrialCondition[][] _trialsByParticipant;
 
-    private Dictionary<ConditionKey, char> _codeByCondition;      // Maps conditions to codes A–L
-    private Dictionary<char, ConditionKey> _conditionByCode;      // Maps codes A–L to conditions
+    private Dictionary<ConditionKey, char> _codeByCondition;      // Maps conditions to codes A–L + M
+    private Dictionary<char, ConditionKey> _conditionByCode;      // Maps codes A–L + M to conditions
+
+    /// <summary>13th condition: neutral surface, both modalities on (baseline).</summary>
+    static readonly ConditionKey NeutralBaselineKey =
+        new ConditionKey(SensoryMode.AudioVisual, SurfaceType.Neutral);
+    const char NeutralBaselineCode = 'M';
+    const int TotalConditionCodes = 13;
 
     private int  _participantIndex;       // 0..participantCount-1
     private int  _trialIndex;             // 0..trialsPerParticipant-1
@@ -161,7 +168,7 @@ public class TestManager : MonoBehaviour
             Debug.LogError("[TestManager] Test SurfaceData is not assigned.");
 
         if (participantCount <= 0) participantCount = 1;
-        trialsPerParticipant = 12; // fixed design
+        trialsPerParticipant = TotalConditionCodes; // fixed design
 
         EnsureDesignGenerated();
         ApplyCurrentTrialState();
@@ -170,7 +177,7 @@ public class TestManager : MonoBehaviour
     void OnValidate()
     {
         if (participantCount <= 0) participantCount = 1;
-        trialsPerParticipant = 12;
+        trialsPerParticipant = TotalConditionCodes;
 
         // In editor: keep debug info / mapping visible
         EnsureDesignGenerated();
@@ -214,13 +221,17 @@ public class TestManager : MonoBehaviour
     // Design generation
     void EnsureDesignGenerated()
     {
-        if (_codeByCondition == null || _codeByCondition.Count == 0 ||
-            _conditionByCode == null || _conditionByCode.Count == 0)
+        if (_codeByCondition == null || _conditionByCode == null ||
+            _codeByCondition.Count != TotalConditionCodes ||
+            _conditionByCode.Count != TotalConditionCodes ||
+            !_codeByCondition.ContainsKey(NeutralBaselineKey))
         {
             GenerateConditionCodeMapping();
         }
 
-        if (_trialsByParticipant == null || _trialsByParticipant.Length != participantCount)
+        if (_trialsByParticipant == null ||
+            _trialsByParticipant.Length != participantCount ||
+            TrialSequencesOutOfDate())
         {
             GenerateAllTrialSequences();
         }
@@ -234,10 +245,24 @@ public class TestManager : MonoBehaviour
         UpdateConditionCodeLegendText();
     }
 
+    bool TrialSequencesOutOfDate()
+    {
+        if (_trialsByParticipant == null)
+            return true;
+        for (int p = 0; p < _trialsByParticipant.Length; p++)
+        {
+            TrialCondition[] row = _trialsByParticipant[p];
+            if (row == null || row.Length != trialsPerParticipant)
+                return true;
+        }
+
+        return false;
+    }
+
     void GenerateConditionCodeMapping()
     {
-        _codeByCondition = new Dictionary<ConditionKey, char>(12);
-        _conditionByCode = new Dictionary<char, ConditionKey>(12);
+        _codeByCondition = new Dictionary<ConditionKey, char>(TotalConditionCodes);
+        _conditionByCode = new Dictionary<char, ConditionKey>(TotalConditionCodes);
 
         // Build all 12 unique condition combinations
         var allConditions = new List<ConditionKey>(12);
@@ -261,6 +286,10 @@ public class TestManager : MonoBehaviour
             _codeByCondition[key] = letter;
             _conditionByCode[letter] = key;
         }
+
+        // Neutral baseline: always M (not mixed into A–L shuffle).
+        _codeByCondition[NeutralBaselineKey] = NeutralBaselineCode;
+        _conditionByCode[NeutralBaselineCode] = NeutralBaselineKey;
     }
 
     void GenerateAllTrialSequences()
@@ -284,8 +313,7 @@ public class TestManager : MonoBehaviour
 
     TrialCondition[] GenerateTrialsForParticipant(int participantIndex, System.Random rng)
     {
-        var trials = new TrialCondition[trialsPerParticipant];
-        int writeIndex = 0;
+        var trialList = new List<TrialCondition>(trialsPerParticipant);
 
         // Select Latin square row for this participant
         int row = participantIndex % s_sensoryLatinSquare.Length;
@@ -308,22 +336,35 @@ public class TestManager : MonoBehaviour
                     letter = '?';
                 }
 
-                trials[writeIndex++] = new TrialCondition
+                trialList.Add(new TrialCondition
                 {
                     mode    = mode,
                     surface = surfaces[i],
                     code    = letter.ToString()
-                };
+                });
             }
         }
 
-        return trials;
+        if (!_codeByCondition.TryGetValue(NeutralBaselineKey, out char mLetter))
+            mLetter = NeutralBaselineCode;
+
+        var neutralBaselineTrial = new TrialCondition
+        {
+            mode    = NeutralBaselineKey.mode,
+            surface = NeutralBaselineKey.surface,
+            code    = mLetter.ToString()
+        };
+
+        // Random position so M feels like the other shuffled conditions.
+        trialList.Insert(rng.Next(0, trialList.Count + 1), neutralBaselineTrial);
+
+        return trialList.ToArray();
     }
 
     TrialCondition[] GenerateDebugTrialSequence()
     {
-        var trials = new TrialCondition[trialsPerParticipant];
-        int writeIndex = 0;
+        var trialList = new List<TrialCondition>(trialsPerParticipant);
+        var rng = new System.Random(randomSeed);
 
         // Simple sequence: AV-V-AV through all surfaces in order
         SensoryMode[] debugModes = new[] { SensoryMode.AudioVisual, SensoryMode.VisualOnly, SensoryMode.AudioOnly };
@@ -338,16 +379,26 @@ public class TestManager : MonoBehaviour
                     letter = '?';
                 }
 
-                trials[writeIndex++] = new TrialCondition
+                trialList.Add(new TrialCondition
                 {
                     mode    = mode,
                     surface = surface,
                     code    = letter.ToString()
-                };
+                });
             }
         }
 
-        return trials;
+        if (!_codeByCondition.TryGetValue(NeutralBaselineKey, out char mLetter))
+            mLetter = NeutralBaselineCode;
+
+        trialList.Insert(rng.Next(0, trialList.Count + 1), new TrialCondition
+        {
+            mode    = NeutralBaselineKey.mode,
+            surface = NeutralBaselineKey.surface,
+            code    = mLetter.ToString()
+        });
+
+        return trialList.ToArray();
     }
 
     static void Shuffle<T>(IList<T> list, System.Random rng)
@@ -392,7 +443,7 @@ public class TestManager : MonoBehaviour
         }
 
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine("=== CONDITION CODE LEGEND (A–L) ===");
+        sb.AppendLine("=== CONDITION CODE LEGEND (A–L + M) ===");
 
         for (char c = 'A'; c <= 'L'; c++)
         {
@@ -401,6 +452,12 @@ public class TestManager : MonoBehaviour
                 string shortCode = BuildShortConditionCode(key.mode, key.surface);
                 sb.AppendLine($"{c}: {shortCode}");
             }
+        }
+
+        if (_conditionByCode.TryGetValue(NeutralBaselineCode, out ConditionKey mKey))
+        {
+            string mShort = BuildShortConditionCode(mKey.mode, mKey.surface);
+            sb.AppendLine($"{NeutralBaselineCode}: {mShort}");
         }
 
         conditionCodeLegend = sb.ToString();
