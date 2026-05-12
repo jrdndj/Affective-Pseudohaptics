@@ -6,6 +6,13 @@ public class HapticsGlobalData : MonoBehaviour
 {
     public static HapticsGlobalData Instance { get; private set; }
 
+    [Header("Hand telemetry (optional)")]
+    [Tooltip("Assign left/right channels once here. Hand components set HandTelemetrySide to Left or Right.")]
+    public HandTelemetryChannel leftHandTelemetryChannel;
+    public HandTelemetryChannel rightHandTelemetryChannel;
+
+    readonly HandTelemetryChannel[] _bothHandTelemetryChannels = new HandTelemetryChannel[2];
+
     public enum ThermalTestKind { Hot, Cold }
 
     [Serializable]
@@ -165,62 +172,62 @@ public struct ThermalVisualSettings
         glideReturnRate = 10f,
 
         maxEffectOffset = 0.06f,
-        velocityLowpassHz = 10f
+        velocityLowpassHz = 7f
     };
 
     [Header("Global Texture Audio")]
     public AudioSettings audio = new AudioSettings {
-        masterGain = 0.30f,
-        speedRef = 0.60f,
+        masterGain = 0.24f,
+        speedRef = 0.70f,
         attackSmoothSec = 0.02f,
-        releaseSmoothSec = 0.06f,
+        releaseSmoothSec = 0.08f,
 
-        // BOOSTED smooth layer
-        smoothVolByR = new Vector2(0.22f, 0.60f),
-        lowpassHzByR = new Vector2(1500f, 8000f),
+        // Smooth: dark fabric / wind body; rough: brighter band.
+        smoothVolByR = new Vector2(0.48f, 0.58f),
+        lowpassHzByR = new Vector2(520f, 7600f),
 
-        lowpassHzBySpeed = new Vector2(0f, 2000f),
-        glideAMHz = new Vector2(0.4f, 1.5f),
-        glideAMDepth = 0.12f,
-        smoothLayerLowpassHz = 8000f,
+        lowpassHzBySpeed = new Vector2(0f, 260f),
+        glideAMHz = new Vector2(0.06f, 0.30f),
+        glideAMDepth = 0.03f,
+        smoothLayerLowpassHz = 880f,
 
-        roughVolByR = new Vector2(0.0f, 1.0f),
+        roughVolByR = new Vector2(0.0f, 0.78f),
         jitterHzByR = new Vector2(10f, 30f),
-        jitterDepth = 0.18f,
-        roughLowpassHz = new Vector2(4000f, 12000f),
-        roughDriveAt1 = 0.35f,
+        jitterDepth = 0.12f,
+        roughLowpassHz = new Vector2(3500f, 9800f),
+        roughDriveAt1 = 0.24f,
 
         enableGrainAccents = true,
-        grainRateHz = new Vector2(40f, 180f),
-        grainTauSec = new Vector2(0.003f, 0.007f),
+        grainRateHz = new Vector2(32f, 130f),
+        grainTauSec = new Vector2(0.004f, 0.009f),
         grainBandHz = new Vector2(2500f, 6000f),
         grainBandwidthHz = new Vector2(1200f, 3200f),
-        grainLevel = 0.25f,
+        grainLevel = 0.16f,
 
-        bassBoost = 0.30f,
-        midBoost = 0.20f,
+        bassBoost = 0.34f,
+        midBoost = 0.24f,
         bassFreq = 250f,
         midFreq = 1200f,
 
-        playSpeedThreshold = 0.012f,
+        playSpeedThreshold = 0.008f,
         controlRateHz = 40f,
 
         impactClick = true,
         impactMaxHz = 6000f,
         impactTauSec = 0.012f,
-        impactLevel = 0.20f
+        impactLevel = 0.12f
     };
 
     [Header("Global Thermal Audio")]
     public ThermalAudioSettings thermalAudio = new ThermalAudioSettings {
-        masterGain       = 0.35f,
+        masterGain       = 0.24f,
         attackSec        = 0.02f,
-        releaseSec       = 0.08f,
-        hotNoiseCutoffHz = 9000f,
-        coldNoiseCutoffHz= 2800f,
+        releaseSec       = 0.10f,
+        hotNoiseCutoffHz = 7600f,
+        coldNoiseCutoffHz= 2500f,
         coldLfoHz        = 6f,
-        speedRef         = 0.6f,
-        minSpeedGain     = 0.6f,
+        speedRef         = 0.8f,
+        minSpeedGain     = 0.75f,
         maxSpeedGain     = 1.0f,
         controlRateHz    = 40f
     };
@@ -257,12 +264,36 @@ public struct ThermalVisualSettings
     };
     public event Action OnGlobalsChanged;
 
+    /// <summary>Channel for the given hand; may be null if not assigned.</summary>
+    public HandTelemetryChannel GetHandTelemetryChannel(HandTelemetrySide side)
+    {
+        return side == HandTelemetrySide.Left ? leftHandTelemetryChannel : rightHandTelemetryChannel;
+    }
+
+    /// <summary>Fixed [left, right] order for merge helpers; null entries allowed.</summary>
+    public HandTelemetryChannel[] GetBothHandTelemetryChannels()
+    {
+        RefreshHandTelemetryBothCache();
+        return _bothHandTelemetryChannels;
+    }
+
+    void RefreshHandTelemetryBothCache()
+    {
+        _bothHandTelemetryChannels[0] = leftHandTelemetryChannel;
+        _bothHandTelemetryChannels[1] = rightHandTelemetryChannel;
+    }
+
     void Awake()
     {
         if (Instance && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
         DontDestroyOnLoad(gameObject);
+        RefreshHandTelemetryBothCache();
     }
 
-    void OnValidate() => OnGlobalsChanged?.Invoke();
+    void OnValidate()
+    {
+        RefreshHandTelemetryBothCache();
+        OnGlobalsChanged?.Invoke();
+    }
 }

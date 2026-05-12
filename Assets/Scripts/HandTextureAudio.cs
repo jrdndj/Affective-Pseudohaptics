@@ -1,77 +1,121 @@
 using UnityEngine;
+using UnityEngine.Serialization;
 using System;
 
 [RequireComponent(typeof(AudioSource))]
-[DefaultExecutionOrder(11020)]
+[DefaultExecutionOrder(11030)]
 public class HandTextureAudio : MonoBehaviour
 {
+    const float TextureOutputSafetyGain = 0.62f;
+    const float ContactLoudnessFloor = 0.82f;
+    const float SpeedLoudnessFloor = 0.72f;
+    const float SpeedLoudnessExponent = 0.65f;
+    const float SmoothSurfaceGain = 1.38f;
+    const float SmoothBassCompensation = 0.22f;
+    const float SmoothMidCompensation = 0.02f;
+    const float SmoothMidBoostScale = 0.12f;
+    const float SmoothSpeedFloor = 0.40f;
+    const float SmoothSpeedExponent = 0.52f;
+    const float RoughStaticDamping = 0.82f;
+    const float GrainStaticDamping = 0.75f;
+    const float ImpactDamping = 0.70f;
+
+    [Header("References")]
     public HapticsGlobalData globals;
 
-    public bool useGlobalTelemetry = false;
-    public HandTextureDriver driver;              // Local hand (default)
-    public HandTextureDriver[] aggregateDrivers;  // Multiple hands when useGlobalTelemetry = true
+    [Header("Mode")]
+    public bool useGlobalTelemetry;
 
-    // Internal state
-    AudioSource _src;
-    int _sr;
-    HapticsGlobalData.AudioSettings _settings;
-    float _r, _spd;
-    bool  _active;
-    bool  _touchNow, _touchPrev;
-    SurfaceType _surfaceType;
-    bool _textureSurface;  // Rough/Smooth only
+    [Header("Telemetry")]
+    [Tooltip("Which hand: channel from HapticsGlobalData (left/right on Global Manager).")]
+    public HandTelemetrySide handTelemetrySide = HandTelemetrySide.Left;
+    [SerializeField, FormerlySerializedAs("telemetry"), Tooltip("Optional override. Leave empty to use HapticsGlobalData.")]
+    HandTelemetryChannel _telemetryChannelOverride;
+    [Tooltip("When useGlobalTelemetry: merge these channels. If empty, uses Global Manager left + right.")]
+    public HandTelemetryChannel[] aggregateTelemetry;
 
-    // Control timers
-    float _ctlTimer;
+    [Header("Telemetry — legacy")]
+    [FormerlySerializedAs("driver")]
+    public HandTextureDriver textureHandDriver;
+    [FormerlySerializedAs("aggregateDrivers"), Tooltip("When useGlobalTelemetry and no aggregateTelemetry: merge these drivers.")]
+    public HandTextureDriver[] aggregateTextureHandDrivers;
 
-    // Smooth layer: low-pass filtering + AM
-    float _lpSmooth, _lpA_Smooth;
-    float _amPhase;
-    float _smoothLp1, _smoothLp2;
+    AudioSource _audioSource;
+    int _outputSampleRate;
+    HapticsGlobalData.AudioSettings _audioSettings;
 
-    // Rough layer: jitter modulation
-    float _lpRough, _lpA_Rough;
-    float _jitterHold, _jitterTimer, _jitterInterval;
+    float _roughnessDiscrete01;
+    float _tangentialSpeedCached;
+    bool _isContactActive;
+    bool _touchingNow;
+    bool _touchingPreviousFrame;
+    SurfaceType _surfaceTypeCached;
+    bool _isTextureSurface;
 
-    // Grain accents: impulse bursts
-    const int MaxGrains = 16;
-    struct Grain
+    float _controlTimer;
+
+    float _smoothNoiseLp;
+    float _smoothNoiseLpAlpha;
+    float _amplitudeModulationPhase;
+    float _smoothCascade1;
+    float _smoothCascade2;
+    float _smoothSilkBodyLp;
+    float _smoothSilkBodyLpAlpha;
+    float _smoothWindPhase;
+
+    float _roughNoiseLp;
+    float _roughNoiseLpAlpha;
+    float _jitterHold;
+    float _jitterTimer;
+    float _jitterInterval;
+
+    const int MaxGrainVoices = 16;
+    struct GrainVoice
     {
-        public bool on;
-        public float t, tau, freq, bw, y1, y2, g;
+        public bool IsActive;
+        public float TimeSeconds;
+        public float DecayTau;
+        public float Frequency;
+        public float Bandwidth;
+        public float FilterY1;
+        public float FilterY2;
+        public float Gain;
     }
-    Grain[] _grains = new Grain[MaxGrains];
-    float _nextGrainTime;
-    float _time;
-    float _grainRate;
 
-    // Global contact envelope
-    float _onEnv;
+    GrainVoice[] _grainVoices = new GrainVoice[MaxGrainVoices];
+    float _nextGrainTimeSeconds;
+    float _dspTimeSeconds;
+    float _grainSpawnRateHz;
 
-    // Impact transient on contact
-    float _impactEnv;
-    float _impactHz;
+    float _contactEnvelopeSmoothed;
+    float _impactEnvelope;
+    float _impactOscHz;
 
-    // Bass/Mid enhancement filters
-    float _bassLp, _midLp, _midHp;
-    float _bassA, _midLpA, _midHpA;
+    float _bassLowpass;
+    float _midLowpass;
+    float _midHighpass;
+    float _bassLowpassAlpha;
+    float _midLowpassAlpha;
+    float _midHighpassAlpha;
 
-    // Pseudo-random generator
-    uint _rng = 0x1234567u;
-    float White()
+    uint _randomState = 0x1234567u;
+
+    float WhiteNoise()
     {
-        _rng = 1664525u * _rng + 1013904223u;
-        return ((_rng >> 9) & 0x7FFFFF) / 8388607f * 2f - 1f;
+        _randomState = 1664525u * _randomState + 1013904223u;
+        return ((_randomState >> 9) & 0x7FFFFF) / 8388607f * 2f - 1f;
     }
-    float Rand01()
+
+    float Random01()
     {
-        _rng = 1103515245u * _rng + 12345u;
-        return ((_rng >> 8) & 0xFFFFFF) / 16777215f;
+        _randomState = 1103515245u * _randomState + 12345u;
+        return ((_randomState >> 8) & 0xFFFFFF) / 16777215f;
     }
 
     void Awake()
     {
-        if (!globals) globals = HapticsGlobalData.Instance;
+        if (!globals)
+            globals = HapticsGlobalData.Instance;
         if (!globals)
         {
             Debug.LogError("[HandTextureAudio] No HapticsGlobalData found.");
@@ -79,348 +123,366 @@ public class HandTextureAudio : MonoBehaviour
             return;
         }
 
-        _settings = globals.audio;
-        _src = GetComponent<AudioSource>();
-        _src.playOnAwake = true;
-        _src.loop = true;
+        _audioSettings = globals.audio;
+        _audioSource = GetComponent<AudioSource>();
+        _audioSource.playOnAwake = true;
+        _audioSource.loop = true;
 
-        _sr = AudioSettings.outputSampleRate;
+        _outputSampleRate = AudioSettings.outputSampleRate;
 
-        if (_src.clip == null)
-        {
-            var silent = AudioClip.Create("ProcSilence_Texture", 4, 1, _sr, false);
-            _src.clip = silent;
-        }
-        if (!_src.isPlaying) _src.Play();
+        if (_audioSource.clip == null)
+            _audioSource.clip = AudioClip.Create("ProcSilence_Texture", 4, 1, _outputSampleRate, false);
+        if (!_audioSource.isPlaying)
+            _audioSource.Play();
 
-        var a = _settings;
-        _jitterInterval = 1f / Mathf.Max(1f, a.jitterHzByR.x);
-        _jitterTimer    = _jitterInterval;
-        _jitterHold     = 1f;
+        var audioSettings = _audioSettings;
+        _jitterInterval = 1f / Mathf.Max(1f, audioSettings.jitterHzByR.x);
+        _jitterTimer = _jitterInterval;
+        _jitterHold = 1f;
 
-        CalculateToneCoefficients(a);
+        RecomputeToneFilterCoefficients(in audioSettings);
     }
 
     void OnEnable()
     {
-        if (!globals) globals = HapticsGlobalData.Instance;
+        if (!globals)
+            globals = HapticsGlobalData.Instance;
         if (globals != null)
-        {
-            globals.OnGlobalsChanged += HandleGlobalsChanged;
-        }
+            globals.OnGlobalsChanged += OnHapticsGlobalsChanged;
     }
 
     void OnDisable()
     {
         if (globals != null)
+            globals.OnGlobalsChanged -= OnHapticsGlobalsChanged;
+    }
+
+    void OnHapticsGlobalsChanged()
+    {
+        if (globals == null)
+            return;
+        _audioSettings = globals.audio;
+        RecomputeToneFilterCoefficients(in _audioSettings);
+    }
+
+    void RecomputeToneFilterCoefficients(in HapticsGlobalData.AudioSettings audioSettings)
+    {
+        float dt = 1f / Mathf.Max(1, _outputSampleRate);
+        _bassLowpassAlpha = 1f - Mathf.Exp(-2f * Mathf.PI * Mathf.Max(10f, audioSettings.bassFreq) * dt);
+        _midLowpassAlpha = 1f - Mathf.Exp(-2f * Mathf.PI * Mathf.Max(10f, audioSettings.midFreq) * dt);
+        _midHighpassAlpha = 1f - Mathf.Exp(-2f * Mathf.PI * Mathf.Max(10f, audioSettings.midFreq * 0.5f) * dt);
+    }
+
+    void LateUpdate()
+    {
+        var audioSettings = _audioSettings;
+
+        HandTelemetrySnapshot snapshot;
+        if (useGlobalTelemetry)
         {
-            globals.OnGlobalsChanged -= HandleGlobalsChanged;
-        }
-    }
+            HandTelemetryChannel[] channelGroup = null;
+            if (aggregateTelemetry != null && aggregateTelemetry.Length > 0)
+                channelGroup = aggregateTelemetry;
+            else if (HapticsGlobalData.Instance != null)
+                channelGroup = HapticsGlobalData.Instance.GetBothHandTelemetryChannels();
 
-    void HandleGlobalsChanged()
-    {
-        if (globals == null) return;
-        _settings = globals.audio;
-        CalculateToneCoefficients(_settings);
-    }
-
-    void CalculateToneCoefficients(in HapticsGlobalData.AudioSettings a)
-    {
-        float dt = 1f / Mathf.Max(1, _sr);
-
-        _bassA   = 1f - Mathf.Exp(-2f * Mathf.PI * Mathf.Max(10f, a.bassFreq) * dt);
-        _midLpA  = 1f - Mathf.Exp(-2f * Mathf.PI * Mathf.Max(10f, a.midFreq) * dt);
-        _midHpA  = 1f - Mathf.Exp(-2f * Mathf.PI * Mathf.Max(10f, a.midFreq * 0.5f) * dt);
-    }
-
-    int SurfacePriority(SurfaceType t)
-    {
-        switch (t)
-        {
-            case SurfaceType.Rough:  return 2;
-            case SurfaceType.Smooth: return 1;
-            default:                 return 0;
-        }
-    }
-
-    void Update()
-    {
-        var a = _settings;
-
-        bool touching = false;
-        bool sliding  = false;
-        float spd     = 0f;
-        SurfaceType surfaceType = SurfaceType.Neutral;
-
-        if (useGlobalTelemetry && aggregateDrivers != null && aggregateDrivers.Length > 0)
-        {
-            int bestPriority = -1;
-
-            for (int i = 0; i < aggregateDrivers.Length; i++)
-            {
-                var d = aggregateDrivers[i];
-                if (!d) continue;
-
-                touching |= d.IsTouching;
-                sliding  |= d.IsSliding;
-                spd       = Mathf.Max(spd, d.TangentialSpeed);
-
-                if (d.IsTouching && d.CurrentSurface != null)
-                {
-                    var t = d.CurrentSurface.surfaceType;
-                    int p = SurfacePriority(t);
-                    if (p > bestPriority)
-                    {
-                        bestPriority = p;
-                        surfaceType  = t;
-                    }
-                }
-            }
+            if (channelGroup != null && channelGroup.Length > 0)
+                snapshot = HandTelemetrySnapshot.MergeTexturePriority(channelGroup);
+            else if (aggregateTextureHandDrivers != null && aggregateTextureHandDrivers.Length > 0)
+                snapshot = HandTelemetrySnapshot.MergeTexturePriority(aggregateTextureHandDrivers);
+            else
+                return;
         }
         else
         {
-            if (!driver) return;
+            var channel = _telemetryChannelOverride;
+            if (!channel && HapticsGlobalData.Instance != null)
+                channel = HapticsGlobalData.Instance.GetHandTelemetryChannel(handTelemetrySide);
 
-            touching = driver.IsTouching;
-            sliding  = driver.IsSliding;
-            spd      = driver.TangentialSpeed;
-
-            if (driver.IsTouching && driver.CurrentSurface != null)
-                surfaceType = driver.CurrentSurface.surfaceType;
+            if (channel)
+                snapshot = channel.Latest;
+            else if (textureHandDriver)
+                snapshot = HandTelemetrySnapshot.FromHandTextureDriver(textureHandDriver);
             else
-                surfaceType = SurfaceType.Neutral;
+                return;
         }
 
-        _touchPrev   = _touchNow;
-        _touchNow    = touching;
-        _surfaceType = surfaceType;
-        _spd         = spd;
+        bool isTouching = snapshot.IsTouching;
+        float tangentialSpeed = snapshot.TangentialSpeed;
+        SurfaceType surfaceType = snapshot.SurfaceType;
 
-        // Discrete roughness:
-        // Rough → 1, Smooth → 0, Neutral → 0.5 (but Neutral is silent)
-        float rDiscrete;
+        _touchingPreviousFrame = _touchingNow;
+        _touchingNow = isTouching;
+        _surfaceTypeCached = surfaceType;
+        _tangentialSpeedCached = tangentialSpeed;
+
         switch (surfaceType)
         {
-            case SurfaceType.Rough:  rDiscrete = 1f;  break;
-            case SurfaceType.Smooth: rDiscrete = 0f;  break;
-            default:                 rDiscrete = 0.5f; break;
+            case SurfaceType.Rough:
+                _roughnessDiscrete01 = 1f;
+                break;
+            case SurfaceType.Smooth:
+                _roughnessDiscrete01 = 0f;
+                break;
+            default:
+                _roughnessDiscrete01 = 0.5f;
+                break;
         }
-        _r = rDiscrete;
 
-        // Only Rough / Smooth drive texture audio
-        _textureSurface = (surfaceType == SurfaceType.Rough || surfaceType == SurfaceType.Smooth);
-        _active         = touching;
+        _isTextureSurface = surfaceType == SurfaceType.Rough || surfaceType == SurfaceType.Smooth;
+        _isContactActive = isTouching;
 
-        // Impact click only on texture surfaces
-        if (a.impactClick && _touchNow && !_touchPrev && _textureSurface)
+        // High-frequency impact clicks read as harsh on smooth fabric; keep them for rough only.
+        if (audioSettings.impactClick && _touchingNow && !_touchingPreviousFrame && _isTextureSurface &&
+            surfaceType != SurfaceType.Smooth)
         {
-            _impactEnv = 1f;
-            float spd01 = Mathf.Clamp01(_spd / Mathf.Max(0.001f, a.speedRef));
-            _impactHz   = Mathf.Lerp(2000f, a.impactMaxHz, spd01);
+            _impactEnvelope = 1f;
+            float speed01 = Mathf.Clamp01(_tangentialSpeedCached / Mathf.Max(0.001f, audioSettings.speedRef));
+            _impactOscHz = Mathf.Lerp(2000f, audioSettings.impactMaxHz, speed01);
         }
     }
 
-    void OnAudioFilterRead(float[] data, int channels)
+    void OnAudioFilterRead(float[] data, int channelCount)
     {
-        var a = _settings;
-        int n = data.Length / channels;
-        float dt = 1f / Mathf.Max(1, _sr);
+        var audioSettings = _audioSettings;
+        int sampleCount = data.Length / channelCount;
+        float dt = 1f / Mathf.Max(1, _outputSampleRate);
 
-        for (int i = 0; i < n; i++)
+        for (int i = 0; i < sampleCount; i++)
         {
-            _time     += dt;
-            _ctlTimer += dt;
+            _dspTimeSeconds += dt;
+            _controlTimer += dt;
 
-            // Control-rate update
-            if (_ctlTimer >= (1f / Mathf.Max(10f, a.controlRateHz)))
+            if (_controlTimer >= 1f / Mathf.Max(10f, audioSettings.controlRateHz))
             {
-                _ctlTimer = 0f;
+                _controlTimer = 0f;
 
-                float r     = _r;
-                float spd01 = Mathf.Clamp01(_spd / Mathf.Max(0.001f, a.speedRef));
+                float roughness = _roughnessDiscrete01;
+                float speed01 = Mathf.Clamp01(_tangentialSpeedCached / Mathf.Max(0.001f, audioSettings.speedRef));
 
-                // Smooth LPF coeff
-                float cutSmooth =
-                    Mathf.Lerp(a.lowpassHzByR.x, a.lowpassHzByR.y, r) +
-                    Mathf.Lerp(a.lowpassHzBySpeed.x, a.lowpassHzBySpeed.y, spd01) * (1f - r);
-                cutSmooth = Mathf.Clamp(cutSmooth, 80f, _sr * 0.45f);
-                _lpA_Smooth = 1f - Mathf.Exp(-2f * Mathf.PI * cutSmooth * dt);
+                float smoothCutHz =
+                    Mathf.Lerp(audioSettings.lowpassHzByR.x, audioSettings.lowpassHzByR.y, roughness) +
+                    Mathf.Lerp(audioSettings.lowpassHzBySpeed.x, audioSettings.lowpassHzBySpeed.y, speed01) * (1f - roughness);
+                smoothCutHz = Mathf.Clamp(smoothCutHz, 80f, _outputSampleRate * 0.45f);
+                _smoothNoiseLpAlpha = 1f - Mathf.Exp(-2f * Mathf.PI * smoothCutHz * dt);
 
-                // Rough LPF coeff
-                float cutRough =
-                    Mathf.Lerp(a.roughLowpassHz.x, a.roughLowpassHz.y, Mathf.Max(r, spd01));
-                cutRough   = Mathf.Clamp(cutRough, 200f, _sr * 0.45f);
-                _lpA_Rough = 1f - Mathf.Exp(-2f * Mathf.PI * cutRough * dt);
+                float silkCut = Mathf.Clamp(audioSettings.smoothLayerLowpassHz, 120f, 2200f);
+                _smoothSilkBodyLpAlpha = 1f - Mathf.Exp(-2f * Mathf.PI * silkCut * dt);
 
-                // Jitter
-                float jHz = Mathf.Lerp(a.jitterHzByR.x, a.jitterHzByR.y, r) *
-                            Mathf.Lerp(0.2f, 1f, spd01);
-                jHz = Mathf.Max(1f, jHz);
-                _jitterInterval = 1f / jHz;
-                _jitterTimer    = Mathf.Min(_jitterTimer, _jitterInterval);
+                float roughCutHz =
+                    Mathf.Lerp(audioSettings.roughLowpassHz.x, audioSettings.roughLowpassHz.y, Mathf.Max(roughness, speed01));
+                roughCutHz = Mathf.Clamp(roughCutHz, 200f, _outputSampleRate * 0.45f);
+                _roughNoiseLpAlpha = 1f - Mathf.Exp(-2f * Mathf.PI * roughCutHz * dt);
 
-                // Recompute EQ coefficients
-                CalculateToneCoefficients(a);
+                float jitterHz = Mathf.Lerp(audioSettings.jitterHzByR.x, audioSettings.jitterHzByR.y, roughness) *
+                                 Mathf.Lerp(0.2f, 1f, speed01);
+                jitterHz = Mathf.Max(1f, jitterHz);
+                _jitterInterval = 1f / jitterHz;
+                _jitterTimer = Mathf.Min(_jitterTimer, _jitterInterval);
+
+                RecomputeToneFilterCoefficients(in audioSettings);
             }
 
-            // Global contact envelope
-            float tauGlobal  = (_active ? a.attackSmoothSec : a.releaseSmoothSec);
-            float aEnvGlobal = 1f - Mathf.Exp(-dt / Mathf.Max(0.0001f, tauGlobal));
-            _onEnv = Mathf.Lerp(_onEnv, _active ? 1f : 0f, aEnvGlobal);
+            float contactTau = _isContactActive ? audioSettings.attackSmoothSec : audioSettings.releaseSmoothSec;
+            float contactBlend = 1f - Mathf.Exp(-dt / Mathf.Max(0.0001f, contactTau));
+            _contactEnvelopeSmoothed = Mathf.Lerp(_contactEnvelopeSmoothed, _isContactActive ? 1f : 0f, contactBlend);
 
-            float textureMask = _textureSurface ? 1f : 0f;
+            float textureMask = _isTextureSurface ? 1f : 0f;
 
-            // Smooth layer
-            _lpSmooth  += _lpA_Smooth * (White() - _lpSmooth);
-            _smoothLp1 += _lpA_Smooth * 0.7f * (_lpSmooth - _smoothLp1);
-            _smoothLp2 += _lpA_Smooth * 0.5f * (_smoothLp1 - _smoothLp2);
-            float smoothSignal = _smoothLp2;
+            _smoothNoiseLp += _smoothNoiseLpAlpha * (WhiteNoise() - _smoothNoiseLp);
+            _smoothCascade1 += _smoothNoiseLpAlpha * 0.7f * (_smoothNoiseLp - _smoothCascade1);
+            _smoothCascade2 += _smoothNoiseLpAlpha * 0.5f * (_smoothCascade1 - _smoothCascade2);
+            float smoothSignal = _smoothCascade2;
 
-            float spd01_now = Mathf.Clamp01(_spd / Mathf.Max(0.001f, a.speedRef));
-            float amHz      = Mathf.Lerp(a.glideAMHz.x, a.glideAMHz.y, spd01_now) * (1f - _r);
-            _amPhase += amHz * dt * 2f * Mathf.PI;
-            if (_amPhase > Mathf.PI * 2f) _amPhase -= Mathf.PI * 2f;
-            float am = 1f + a.glideAMDepth * Mathf.Sin(_amPhase);
+            float speed01Now = Mathf.Clamp01(_tangentialSpeedCached / Mathf.Max(0.001f, audioSettings.speedRef));
+            bool smoothOnly = _roughnessDiscrete01 < 1e-3f && textureMask > 0.5f;
+            float amDepthUse = audioSettings.glideAMDepth;
+            float amHzLow = audioSettings.glideAMHz.x;
+            float amHzHigh = audioSettings.glideAMHz.y;
+            if (smoothOnly)
+            {
+                amDepthUse *= 0.28f;
+                amHzLow = Mathf.Min(amHzLow, 0.10f);
+                amHzHigh = Mathf.Min(amHzHigh, 0.32f);
+            }
 
-            // Stronger smooth thanks to boosted smoothVolByR in globals
-            float smoothVol =
-                Mathf.Lerp(a.smoothVolByR.x, a.smoothVolByR.y, _r) * (1f - _r);
-            smoothVol *= spd01_now * textureMask;
+            float amHz = Mathf.Lerp(amHzLow, amHzHigh, speed01Now) * (1f - _roughnessDiscrete01);
+            _amplitudeModulationPhase += amHz * dt * 2f * Mathf.PI;
+            if (_amplitudeModulationPhase > Mathf.PI * 2f)
+                _amplitudeModulationPhase -= Mathf.PI * 2f;
+            float amplitudeMod = 1f + amDepthUse * Mathf.Sin(_amplitudeModulationPhase);
 
-            float smoothSample = smoothSignal * am * smoothVol;
+            float smoothVolume =
+                Mathf.Lerp(audioSettings.smoothVolByR.x, audioSettings.smoothVolByR.y, _roughnessDiscrete01) *
+                (1f - _roughnessDiscrete01);
+            float smoothSpeedFactor = smoothOnly
+                ? Mathf.Lerp(SmoothSpeedFloor, 1f, Mathf.Pow(speed01Now, SmoothSpeedExponent))
+                : speed01Now;
+            smoothVolume *= smoothSpeedFactor * textureMask;
+            float smoothSampleRaw = smoothSignal * amplitudeMod * smoothVolume;
 
-            // Rough layer
-            _lpRough += _lpA_Rough * (White() - _lpRough);
+            if (smoothOnly)
+            {
+                _smoothWindPhase += dt * Mathf.Lerp(0.10f, 0.26f, speed01Now) * 2f * Mathf.PI;
+                if (_smoothWindPhase > Mathf.PI * 2f)
+                    _smoothWindPhase -= Mathf.PI * 2f;
+                float windBreath = 0.78f + 0.22f * Mathf.Sin(_smoothWindPhase);
+                _smoothSilkBodyLp += _smoothSilkBodyLpAlpha * (smoothSampleRaw * windBreath - _smoothSilkBodyLp);
+                smoothSampleRaw = Mathf.Lerp(smoothSampleRaw, _smoothSilkBodyLp, 0.72f);
+            }
+            else
+            {
+                _smoothSilkBodyLp = Mathf.Lerp(_smoothSilkBodyLp, 0f, 1f - Mathf.Exp(-30f * dt));
+            }
+
+            float smoothSample = smoothSampleRaw;
+
+            _roughNoiseLp += _roughNoiseLpAlpha * (WhiteNoise() - _roughNoiseLp);
 
             _jitterTimer += dt;
             if (_jitterTimer >= _jitterInterval)
             {
                 _jitterTimer -= _jitterInterval;
-                _jitterHold   = 1f + (Rand01() * 2f - 1f) * a.jitterDepth;
+                _jitterHold = 1f + (Random01() * 2f - 1f) * audioSettings.jitterDepth;
             }
 
-            float drive    = 1f + _r * a.roughDriveAt1;
-            float roughRaw = SoftClip(_lpRough * drive);
+            float roughDrive = 1f + _roughnessDiscrete01 * audioSettings.roughDriveAt1;
+            float roughRaw = SoftClip(_roughNoiseLp * roughDrive);
+            float roughVolume = Mathf.Lerp(audioSettings.roughVolByR.x, audioSettings.roughVolByR.y, _roughnessDiscrete01);
+            roughVolume *= speed01Now * textureMask;
+            float roughSample = roughRaw * _jitterHold * roughVolume * RoughStaticDamping;
 
-            float roughVol = Mathf.Lerp(a.roughVolByR.x, a.roughVolByR.y, _r);
-            roughVol *= spd01_now * textureMask;
-
-            float roughSample = roughRaw * _jitterHold * roughVol;
-
-            // Grain accents
             float grainMix = 0f;
-            if (a.enableGrainAccents)
+            if (audioSettings.enableGrainAccents)
             {
-                float rGate = Mathf.SmoothStep(0f, 1f, _r) * textureMask;
-                _grainRate  = Mathf.Lerp(a.grainRateHz.x, a.grainRateHz.y, spd01_now) * rGate;
+                float roughGate = Mathf.SmoothStep(0f, 1f, _roughnessDiscrete01) * textureMask;
+                _grainSpawnRateHz = Mathf.Lerp(audioSettings.grainRateHz.x, audioSettings.grainRateHz.y, speed01Now) * roughGate;
 
-                if (_grainRate > 0.01f)
+                if (_grainSpawnRateHz > 0.01f)
                 {
-                    while (_time >= _nextGrainTime)
+                    while (_dspTimeSeconds >= _nextGrainTimeSeconds)
                     {
-                        SpawnGrain(a, rGate, spd01_now);
-                        float u   = Mathf.Max(1e-6f, Rand01());
-                        float gap = -Mathf.Log(u) / _grainRate;
-                        _nextGrainTime = (_nextGrainTime <= 0f ? _time : _nextGrainTime) + gap;
+                        SpawnGrainVoice(in audioSettings, roughGate, speed01Now);
+                        float u = Mathf.Max(1e-6f, Random01());
+                        float gap = -Mathf.Log(u) / _grainSpawnRateHz;
+                        _nextGrainTimeSeconds = (_nextGrainTimeSeconds <= 0f ? _dspTimeSeconds : _nextGrainTimeSeconds) + gap;
                     }
                 }
 
-                for (int g = 0; g < MaxGrains; g++)
+                for (int g = 0; g < MaxGrainVoices; g++)
                 {
-                    if (!_grains[g].on) continue;
-                    var gr = _grains[g];
-                    gr.t += dt;
+                    if (!_grainVoices[g].IsActive)
+                        continue;
+                    var grain = _grainVoices[g];
+                    grain.TimeSeconds += dt;
 
-                    float env = Mathf.Exp(-gr.t / gr.tau);
-                    if (env < 1e-3f)
+                    float envelope = Mathf.Exp(-grain.TimeSeconds / grain.DecayTau);
+                    if (envelope < 1e-3f)
                     {
-                        gr.on = false;
-                        _grains[g] = gr;
+                        grain.IsActive = false;
+                        _grainVoices[g] = grain;
                         continue;
                     }
 
-                    float n0 = White();
-                    gr.y1 += 0.12f * (n0 - gr.y1);
-                    float hp = n0 - gr.y1;
+                    float n0 = WhiteNoise();
+                    grain.FilterY1 += 0.12f * (n0 - grain.FilterY1);
+                    float highpass = n0 - grain.FilterY1;
 
                     float lpa = 2f * Mathf.PI *
-                                Mathf.Clamp(gr.freq + gr.bw, 80f, _sr * 0.45f) * dt;
-                    lpa     = Mathf.Clamp01(lpa);
-                    gr.y2  += lpa * (hp - gr.y2);
-                    float bp = gr.y2;
+                                Mathf.Clamp(grain.Frequency + grain.Bandwidth, 80f, _outputSampleRate * 0.45f) * dt;
+                    lpa = Mathf.Clamp01(lpa);
+                    grain.FilterY2 += lpa * (highpass - grain.FilterY2);
+                    float bandpass = grain.FilterY2;
 
-                    grainMix += bp * gr.g * env;
-                    _grains[g] = gr;
+                    grainMix += bandpass * grain.Gain * envelope;
+                    _grainVoices[g] = grain;
                 }
             }
 
-            // Impact click
-            float impact = 0f;
-            if (_impactEnv > 1e-3f && a.impactClick && _textureSurface)
+            float impactSample = 0f;
+            if (_impactEnvelope > 1e-3f && audioSettings.impactClick)
             {
-                _impactEnv *= Mathf.Exp(-dt / Mathf.Max(1e-4f, a.impactTauSec));
-                float nX  = White();
-                float osc = Mathf.Sin(2f * Mathf.PI * _impactHz * _time);
-                impact    = nX * Mathf.Abs(osc) * _impactEnv * a.impactLevel;
+                _impactEnvelope *= Mathf.Exp(-dt / Mathf.Max(1e-4f, audioSettings.impactTauSec));
+                if (_isTextureSurface && _surfaceTypeCached != SurfaceType.Smooth)
+                {
+                    float noise = WhiteNoise();
+                    float osc = Mathf.Sin(2f * Mathf.PI * _impactOscHz * _dspTimeSeconds);
+                    impactSample = noise * Mathf.Abs(osc) * _impactEnvelope * audioSettings.impactLevel * ImpactDamping;
+                }
             }
 
-            // Texture sample with envelope
             float textureSample =
-                (smoothSample + roughSample + grainMix * a.grainLevel + impact) * _onEnv;
+                (smoothSample + roughSample + grainMix * audioSettings.grainLevel * GrainStaticDamping + impactSample) * _contactEnvelopeSmoothed;
 
-            // Bass & mid enhancement
             float sample = textureSample;
-            _bassLp += _bassA * (sample - _bassLp);
-            sample  += _bassLp * a.bassBoost;
+            _bassLowpass += _bassLowpassAlpha * (sample - _bassLowpass);
+            sample += _bassLowpass * audioSettings.bassBoost;
 
-            _midLp += _midLpA * (sample - _midLp);
-            _midHp += _midHpA * (sample - _midHp);
-            float midContent = _midLp - _midHp;
-            sample += midContent * a.midBoost;
+            _midLowpass += _midLowpassAlpha * (sample - _midLowpass);
+            _midHighpass += _midHighpassAlpha * (sample - _midHighpass);
+            float midContent = _midLowpass - _midHighpass;
+            bool smoothTextureActive = _isTextureSurface && _surfaceTypeCached == SurfaceType.Smooth;
+            float midBoostScaled = smoothTextureActive
+                ? audioSettings.midBoost * SmoothMidBoostScale
+                : audioSettings.midBoost;
+            sample += midContent * midBoostScaled;
 
-            sample *= a.masterGain;
+            if (smoothTextureActive)
+            {
+                sample += _bassLowpass * SmoothBassCompensation;
+                sample += midContent * SmoothMidCompensation;
+            }
 
-            // Mix into channels
-            for (int ch = 0; ch < channels; ch++)
-                data[i * channels + ch] += sample;
+            float speedLoudness = Mathf.Lerp(
+                SpeedLoudnessFloor,
+                1f,
+                Mathf.Pow(speed01Now, SpeedLoudnessExponent)
+            );
+            float contactLoudness = Mathf.Lerp(ContactLoudnessFloor, 1f, _contactEnvelopeSmoothed);
+            float surfaceComp = smoothTextureActive ? SmoothSurfaceGain : 1f;
+            sample *= audioSettings.masterGain * speedLoudness * contactLoudness * surfaceComp * TextureOutputSafetyGain;
+
+            for (int ch = 0; ch < channelCount; ch++)
+                data[i * channelCount + ch] += sample;
         }
     }
 
-    // Soft clipping function
     static float SoftClip(float x)
     {
         x = Mathf.Clamp(x, -2.5f, 2.5f);
         return x - (x * x * x) / 3f;
     }
 
-    void SpawnGrain(in HapticsGlobalData.AudioSettings a, float rGate, float spd01)
+    void SpawnGrainVoice(in HapticsGlobalData.AudioSettings audioSettings, float roughGate, float speed01)
     {
-        int idx = -1;
-        for (int i = 0; i < MaxGrains; i++)
+        int index = -1;
+        for (int i = 0; i < MaxGrainVoices; i++)
         {
-            if (!_grains[i].on)
+            if (!_grainVoices[i].IsActive)
             {
-                idx = i;
+                index = i;
                 break;
             }
         }
-        if (idx < 0) return;
 
-        float tau = Mathf.Lerp(a.grainTauSec.x, a.grainTauSec.y, 1f - spd01);
-        float f0  = Mathf.Lerp(a.grainBandHz.x, a.grainBandHz.y, rGate);
-        float bw  = Mathf.Lerp(a.grainBandwidthHz.x, a.grainBandwidthHz.y, spd01);
-        float g   = Mathf.Lerp(0.08f, 1.0f, rGate) * Mathf.Lerp(0.25f, 1.0f, spd01);
+        if (index < 0)
+            return;
 
-        _grains[idx] = new Grain {
-            on   = true,
-            t    = 0f,
-            tau  = tau,
-            freq = f0,
-            bw   = bw,
-            g    = g,
-            y1   = 0f,
-            y2   = 0f
+        float tau = Mathf.Lerp(audioSettings.grainTauSec.x, audioSettings.grainTauSec.y, 1f - speed01);
+        float centerHz = Mathf.Lerp(audioSettings.grainBandHz.x, audioSettings.grainBandHz.y, roughGate);
+        float bandwidth = Mathf.Lerp(audioSettings.grainBandwidthHz.x, audioSettings.grainBandwidthHz.y, speed01);
+        float gain = Mathf.Lerp(0.08f, 1.0f, roughGate) * Mathf.Lerp(0.25f, 1.0f, speed01);
+
+        _grainVoices[index] = new GrainVoice
+        {
+            IsActive = true,
+            TimeSeconds = 0f,
+            DecayTau = tau,
+            Frequency = centerHz,
+            Bandwidth = bandwidth,
+            Gain = gain,
+            FilterY1 = 0f,
+            FilterY2 = 0f
         };
     }
 }

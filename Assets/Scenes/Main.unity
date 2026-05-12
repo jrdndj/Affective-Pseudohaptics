@@ -2169,6 +2169,22 @@ PrefabInstance:
       propertyPath: globals
       value: 
       objectReference: {fileID: 698117372}
+    - target: {fileID: 1698864356205669871, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
+      propertyPath: telemetry
+      value: 
+      objectReference: {fileID: 11400000, guid: ef3fac46428d185498864ebc97db33b7, type: 2}
+    - target: {fileID: 1698864356205669871, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
+      propertyPath: handTelemetrySide
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1698864356205669871, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
+      propertyPath: telemetryChannelOverride
+      value: 
+      objectReference: {fileID: 11400000, guid: ef3fac46428d185498864ebc97db33b7, type: 2}
+    - target: {fileID: 1698864356205669871, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
+      propertyPath: _telemetryChannelOverride
+      value: 
+      objectReference: {fileID: 11400000, guid: ef3fac46428d185498864ebc97db33b7, type: 2}
     - target: {fileID: 1751622089446641022, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
       propertyPath: globals
       value: 
@@ -2186,6 +2202,14 @@ PrefabInstance:
       value: 36
       objectReference: {fileID: 0}
     - target: {fileID: 1751622089446641022, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
+      propertyPath: telemetryChannel
+      value: 
+      objectReference: {fileID: 11400000, guid: ef3fac46428d185498864ebc97db33b7, type: 2}
+    - target: {fileID: 1751622089446641022, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
+      propertyPath: handTelemetrySide
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1751622089446641022, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
       propertyPath: positionFollowStrength
       value: 64
       objectReference: {fileID: 0}
@@ -2193,6 +2217,30 @@ PrefabInstance:
       propertyPath: rotationFollowStrength
       value: 64
       objectReference: {fileID: 0}
+    - target: {fileID: 1751622089446641022, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
+      propertyPath: telemetryChannelOverride
+      value: 
+      objectReference: {fileID: 11400000, guid: ef3fac46428d185498864ebc97db33b7, type: 2}
+    - target: {fileID: 1751622089446641022, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
+      propertyPath: _telemetryChannelOverride
+      value: 
+      objectReference: {fileID: 11400000, guid: ef3fac46428d185498864ebc97db33b7, type: 2}
+    - target: {fileID: 1860336957086773531, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
+      propertyPath: telemetry
+      value: 
+      objectReference: {fileID: 11400000, guid: ef3fac46428d185498864ebc97db33b7, type: 2}
+    - target: {fileID: 1860336957086773531, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
+      propertyPath: handTelemetrySide
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1860336957086773531, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
+      propertyPath: telemetryChannelOverride
+      value: 
+      objectReference: {fileID: 11400000, guid: ef3fac46428d185498864ebc97db33b7, type: 2}
+    - target: {fileID: 1860336957086773531, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
+      propertyPath: _telemetryChannelOverride
+      value: 
+      objectReference: {fileID: 11400000, guid: ef3fac46428d185498864ebc97db33b7, type: 2}
     - target: {fileID: 2014863629517166872, guid: fbedb1053a570294ea6186070bee40c7, type: 3}
       propertyPath: m_Enabled
       value: 0
@@ -2404,8 +2452,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   globals: {fileID: 698117372}
   useGlobalTelemetry: 0
-  driver: {fileID: 101887508}
-  aggregateDrivers: []
+  handTelemetrySide: 1
+  _telemetryChannelOverride: {fileID: 0}
+  aggregateTelemetry: []
+  textureHandDriver: {fileID: 101887508}
+  aggregateTextureHandDrivers: []
 --- !u!114 &101887518
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2426,6 +2477,13 @@ MonoBehaviour:
   planeThickness: 0
   autoFindDecoyColliders: 1
   decoyColliders: []
+  enableSurfaceStick: 1
+  stickEnterDistance: 0.018
+  stickReleaseDistance: 0.06
+  stickReleaseSpeed: 0.35
+  stickEnterFollowHz: 18
+  stickHoldFollowHz: 45
+  outwardVelocityFilterHz: 8
   drawGizmos: 1
   gizmoSize: 0.05
   planeColor: {r: 1, g: 0.2, b: 0.8, a: 0.7}
@@ -6436,6 +6494,191 @@ RectTransform:
   m_CorrespondingSourceObject: {fileID: 2179057468902719979, guid: 69eb4eecbd2100a408ab74fc543b405c, type: 3}
   m_PrefabInstance: {fileID: 367023393}
   m_PrefabAsset: {fileID: 0}
+--- !u!1001 &370731169
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 701989943}
+    m_Modifications:
+    - target: {fileID: 377291013443947822, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_PokeFilter
+      value: 
+      objectReference: {fileID: 370731171}
+    - target: {fileID: 377291013443947822, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_MaxDistance
+      value: 0.015
+      objectReference: {fileID: 0}
+    - target: {fileID: 1055701170845606427, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: -0.08000001
+      objectReference: {fileID: 0}
+    - target: {fileID: 1055701170845606427, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -3.1044087e-10
+      objectReference: {fileID: 0}
+    - target: {fileID: 1811122272821274886, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0.034799986
+      objectReference: {fileID: 0}
+    - target: {fileID: 1811122272821274886, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -0.00000001738469
+      objectReference: {fileID: 0}
+    - target: {fileID: 3880192299337156673, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: -0.0148
+      objectReference: {fileID: 0}
+    - target: {fileID: 3880192299337156673, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4616165200164398447, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalScale.x
+      value: 0.75
+      objectReference: {fileID: 0}
+    - target: {fileID: 4616165200164398447, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalScale.y
+      value: 0.75
+      objectReference: {fileID: 0}
+    - target: {fileID: 4616165200164398447, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalScale.z
+      value: 0.75
+      objectReference: {fileID: 0}
+    - target: {fileID: 4616165200164398447, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: -0.15
+      objectReference: {fileID: 0}
+    - target: {fileID: 4616165200164398447, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: -0.0978
+      objectReference: {fileID: 0}
+    - target: {fileID: 4616165200164398447, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -0.0722
+      objectReference: {fileID: 0}
+    - target: {fileID: 4616165200164398447, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: -0.7071068
+      objectReference: {fileID: 0}
+    - target: {fileID: 4616165200164398447, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0.7071068
+      objectReference: {fileID: 0}
+    - target: {fileID: 4616165200164398447, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4616165200164398447, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4616165200164398447, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 270
+      objectReference: {fileID: 0}
+    - target: {fileID: 4616165200164398447, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4616165200164398447, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4922582553321831162, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_Name
+      value: Change Mode
+      objectReference: {fileID: 0}
+    - target: {fileID: 5419331889293473514, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_SelectExited.m_PersistentCalls.m_Calls.Array.size
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 5419331889293473514, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_SelectEntered.m_PersistentCalls.m_Calls.Array.size
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 5419331889293473514, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_SelectExited.m_PersistentCalls.m_Calls.Array.data[0].m_Mode
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 5419331889293473514, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_SelectEntered.m_PersistentCalls.m_Calls.Array.data[0].m_Mode
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 5419331889293473514, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_SelectExited.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 698117373}
+    - target: {fileID: 5419331889293473514, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_SelectEntered.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 698117373}
+    - target: {fileID: 5419331889293473514, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_SelectExited.m_PersistentCalls.m_Calls.Array.data[0].m_CallState
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 5419331889293473514, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_SelectEntered.m_PersistentCalls.m_Calls.Array.data[0].m_CallState
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 5419331889293473514, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_SelectExited.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
+      value: OnParticipantButtonReleased
+      objectReference: {fileID: 0}
+    - target: {fileID: 5419331889293473514, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_SelectEntered.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
+      value: CycleDebugAVCouplingMode
+      objectReference: {fileID: 0}
+    - target: {fileID: 5419331889293473514, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_SelectExited.m_PersistentCalls.m_Calls.Array.data[0].m_TargetAssemblyTypeName
+      value: TestManager, Assembly-CSharp
+      objectReference: {fileID: 0}
+    - target: {fileID: 5419331889293473514, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_SelectEntered.m_PersistentCalls.m_Calls.Array.data[0].m_TargetAssemblyTypeName
+      value: TestManager, Assembly-CSharp
+      objectReference: {fileID: 0}
+    - target: {fileID: 5419331889293473514, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_SelectExited.m_PersistentCalls.m_Calls.Array.data[0].m_Arguments.m_ObjectArgumentAssemblyTypeName
+      value: UnityEngine.Object, UnityEngine
+      objectReference: {fileID: 0}
+    - target: {fileID: 5419331889293473514, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_SelectEntered.m_PersistentCalls.m_Calls.Array.data[0].m_Arguments.m_ObjectArgumentAssemblyTypeName
+      value: UnityEngine.Object, UnityEngine
+      objectReference: {fileID: 0}
+    - target: {fileID: 5739442573886587065, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_Center.y
+      value: -0.02
+      objectReference: {fileID: 0}
+    - target: {fileID: 8581603193832540159, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: -0.115
+      objectReference: {fileID: 0}
+    - target: {fileID: 8581603193832540159, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+--- !u!4 &370731170 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 4616165200164398447, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+  m_PrefabInstance: {fileID: 370731169}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &370731171 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 2043066480405472099, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
+  m_PrefabInstance: {fileID: 370731169}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 115f1a2a50d85cd4b9d6dad4c95622be, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1 &377412727
 GameObject:
   m_ObjectHideFlags: 0
@@ -8372,11 +8615,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 1811122272821274886, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
       propertyPath: m_LocalPosition.y
-      value: 0.034800023
+      value: 0.034799986
       objectReference: {fileID: 0}
     - target: {fileID: 1811122272821274886, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
       propertyPath: m_LocalPosition.z
-      value: -0.00000003849467
+      value: 0.000000040978193
       objectReference: {fileID: 0}
     - target: {fileID: 3880192299337156673, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
       propertyPath: m_LocalPosition.y
@@ -11518,7 +11761,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 1811122272821274886, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
       propertyPath: m_LocalPosition.y
-      value: 0.034800023
+      value: 0.034799986
       objectReference: {fileID: 0}
     - target: {fileID: 1811122272821274886, guid: 76f3439a0ae796e4b81bee3f91f888ee, type: 3}
       propertyPath: m_LocalPosition.z
@@ -11844,6 +12087,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f3e6c4ae90d6cbb4c985d2abdaacf3ac, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  leftHandTelemetryChannel: {fileID: 11400000, guid: 30c7effbecce8f44597ca930ff4be366, type: 2}
+  rightHandTelemetryChannel: {fileID: 11400000, guid: ef3fac46428d185498864ebc97db33b7, type: 2}
   visual:
     slideSpeedThresholdEnter: 0.02
     slideSpeedThresholdExit: 0.015
@@ -11938,8 +12183,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8ae9ff195df20004191fe71242fc49ba, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  debugMode: 1
-  participantCount: 12
+  debugMode: 0
+  debugAVCouplingMode: 1
+  participantCount: 30
   trialsPerParticipant: 12
   randomSeed: 12345
   testSurface: {fileID: 1439570928}
@@ -11952,11 +12198,124 @@ MonoBehaviour:
   leftHandThermalAudio: {fileID: 5327992782894041726}
   rightHandThermalAudio: {fileID: 101887513}
   label: {fileID: 736119858}
-  debugTrialPlan: "=== PARTICIPANT 1 ===\r\n  Trial 1: [C] AV-H\r\n  Trial 2: [B]
-    AV-R\r\n  Trial 3: [F] AV-C\r\n  Trial 4: [K] AV-S\r\n  Trial 5: [I] V-H\r\n 
-    Trial 6: [G] V-R\r\n  Trial 7: [H] V-C\r\n  Trial 8: [J] V-S\r\n  Trial 9: [L]
-    A-H\r\n  Trial 10: [D] A-R\r\n  Trial 11: [A] A-C\r\n  Trial 12: [E] A-S\r\n\r\n"
-  conditionCodeLegend: 
+  debugTrialPlan: "=== PARTICIPANT 1 ===\r\n  Trial 1: [A] A-C\r\n  Trial 2: [D]
+    A-R\r\n  Trial 3: [E] A-S\r\n  Trial 4: [L] A-H\r\n  Trial 5: [I] V-H\r\n  Trial
+    6: [G] V-R\r\n  Trial 7: [J] V-S\r\n  Trial 8: [H] V-C\r\n  Trial 9: [B] AV-R\r\n 
+    Trial 10: [K] AV-S\r\n  Trial 11: [F] AV-C\r\n  Trial 12: [C] AV-H\r\n\r\n===
+    PARTICIPANT 2 ===\r\n  Trial 1: [G] V-R\r\n  Trial 2: [J] V-S\r\n  Trial 3: [I]
+    V-H\r\n  Trial 4: [H] V-C\r\n  Trial 5: [B] AV-R\r\n  Trial 6: [F] AV-C\r\n 
+    Trial 7: [K] AV-S\r\n  Trial 8: [C] AV-H\r\n  Trial 9: [E] A-S\r\n  Trial 10:
+    [D] A-R\r\n  Trial 11: [L] A-H\r\n  Trial 12: [A] A-C\r\n\r\n=== PARTICIPANT
+    3 ===\r\n  Trial 1: [F] AV-C\r\n  Trial 2: [C] AV-H\r\n  Trial 3: [B] AV-R\r\n 
+    Trial 4: [K] AV-S\r\n  Trial 5: [L] A-H\r\n  Trial 6: [E] A-S\r\n  Trial 7: [D]
+    A-R\r\n  Trial 8: [A] A-C\r\n  Trial 9: [I] V-H\r\n  Trial 10: [J] V-S\r\n  Trial
+    11: [G] V-R\r\n  Trial 12: [H] V-C\r\n\r\n=== PARTICIPANT 4 ===\r\n  Trial 1:
+    [E] A-S\r\n  Trial 2: [L] A-H\r\n  Trial 3: [D] A-R\r\n  Trial 4: [A] A-C\r\n 
+    Trial 5: [J] V-S\r\n  Trial 6: [G] V-R\r\n  Trial 7: [I] V-H\r\n  Trial 8: [H]
+    V-C\r\n  Trial 9: [F] AV-C\r\n  Trial 10: [K] AV-S\r\n  Trial 11: [C] AV-H\r\n 
+    Trial 12: [B] AV-R\r\n\r\n=== PARTICIPANT 5 ===\r\n  Trial 1: [H] V-C\r\n  Trial
+    2: [J] V-S\r\n  Trial 3: [G] V-R\r\n  Trial 4: [I] V-H\r\n  Trial 5: [K] AV-S\r\n 
+    Trial 6: [C] AV-H\r\n  Trial 7: [F] AV-C\r\n  Trial 8: [B] AV-R\r\n  Trial 9:
+    [A] A-C\r\n  Trial 10: [E] A-S\r\n  Trial 11: [L] A-H\r\n  Trial 12: [D] A-R\r\n\r\n===
+    PARTICIPANT 6 ===\r\n  Trial 1: [C] AV-H\r\n  Trial 2: [F] AV-C\r\n  Trial 3:
+    [K] AV-S\r\n  Trial 4: [B] AV-R\r\n  Trial 5: [E] A-S\r\n  Trial 6: [D] A-R\r\n 
+    Trial 7: [A] A-C\r\n  Trial 8: [L] A-H\r\n  Trial 9: [J] V-S\r\n  Trial 10: [I]
+    V-H\r\n  Trial 11: [G] V-R\r\n  Trial 12: [H] V-C\r\n\r\n=== PARTICIPANT 7 ===\r\n 
+    Trial 1: [E] A-S\r\n  Trial 2: [A] A-C\r\n  Trial 3: [D] A-R\r\n  Trial 4: [L]
+    A-H\r\n  Trial 5: [G] V-R\r\n  Trial 6: [J] V-S\r\n  Trial 7: [H] V-C\r\n  Trial
+    8: [I] V-H\r\n  Trial 9: [F] AV-C\r\n  Trial 10: [K] AV-S\r\n  Trial 11: [B]
+    AV-R\r\n  Trial 12: [C] AV-H\r\n\r\n=== PARTICIPANT 8 ===\r\n  Trial 1: [G] V-R\r\n 
+    Trial 2: [J] V-S\r\n  Trial 3: [H] V-C\r\n  Trial 4: [I] V-H\r\n  Trial 5: [C]
+    AV-H\r\n  Trial 6: [B] AV-R\r\n  Trial 7: [F] AV-C\r\n  Trial 8: [K] AV-S\r\n 
+    Trial 9: [L] A-H\r\n  Trial 10: [E] A-S\r\n  Trial 11: [A] A-C\r\n  Trial 12:
+    [D] A-R\r\n\r\n=== PARTICIPANT 9 ===\r\n  Trial 1: [C] AV-H\r\n  Trial 2: [F]
+    AV-C\r\n  Trial 3: [K] AV-S\r\n  Trial 4: [B] AV-R\r\n  Trial 5: [D] A-R\r\n 
+    Trial 6: [E] A-S\r\n  Trial 7: [L] A-H\r\n  Trial 8: [A] A-C\r\n  Trial 9: [G]
+    V-R\r\n  Trial 10: [H] V-C\r\n  Trial 11: [J] V-S\r\n  Trial 12: [I] V-H\r\n\r\n===
+    PARTICIPANT 10 ===\r\n  Trial 1: [L] A-H\r\n  Trial 2: [A] A-C\r\n  Trial 3:
+    [D] A-R\r\n  Trial 4: [E] A-S\r\n  Trial 5: [J] V-S\r\n  Trial 6: [G] V-R\r\n 
+    Trial 7: [I] V-H\r\n  Trial 8: [H] V-C\r\n  Trial 9: [K] AV-S\r\n  Trial 10:
+    [F] AV-C\r\n  Trial 11: [B] AV-R\r\n  Trial 12: [C] AV-H\r\n\r\n=== PARTICIPANT
+    11 ===\r\n  Trial 1: [J] V-S\r\n  Trial 2: [G] V-R\r\n  Trial 3: [H] V-C\r\n 
+    Trial 4: [I] V-H\r\n  Trial 5: [F] AV-C\r\n  Trial 6: [C] AV-H\r\n  Trial 7:
+    [K] AV-S\r\n  Trial 8: [B] AV-R\r\n  Trial 9: [D] A-R\r\n  Trial 10: [A] A-C\r\n 
+    Trial 11: [E] A-S\r\n  Trial 12: [L] A-H\r\n\r\n=== PARTICIPANT 12 ===\r\n  Trial
+    1: [C] AV-H\r\n  Trial 2: [K] AV-S\r\n  Trial 3: [B] AV-R\r\n  Trial 4: [F] AV-C\r\n 
+    Trial 5: [D] A-R\r\n  Trial 6: [E] A-S\r\n  Trial 7: [A] A-C\r\n  Trial 8: [L]
+    A-H\r\n  Trial 9: [G] V-R\r\n  Trial 10: [H] V-C\r\n  Trial 11: [I] V-H\r\n 
+    Trial 12: [J] V-S\r\n\r\n=== PARTICIPANT 13 ===\r\n  Trial 1: [A] A-C\r\n  Trial
+    2: [L] A-H\r\n  Trial 3: [D] A-R\r\n  Trial 4: [E] A-S\r\n  Trial 5: [I] V-H\r\n 
+    Trial 6: [G] V-R\r\n  Trial 7: [J] V-S\r\n  Trial 8: [H] V-C\r\n  Trial 9: [F]
+    AV-C\r\n  Trial 10: [B] AV-R\r\n  Trial 11: [C] AV-H\r\n  Trial 12: [K] AV-S\r\n\r\n===
+    PARTICIPANT 14 ===\r\n  Trial 1: [I] V-H\r\n  Trial 2: [H] V-C\r\n  Trial 3:
+    [G] V-R\r\n  Trial 4: [J] V-S\r\n  Trial 5: [K] AV-S\r\n  Trial 6: [C] AV-H\r\n 
+    Trial 7: [F] AV-C\r\n  Trial 8: [B] AV-R\r\n  Trial 9: [A] A-C\r\n  Trial 10:
+    [D] A-R\r\n  Trial 11: [E] A-S\r\n  Trial 12: [L] A-H\r\n\r\n=== PARTICIPANT
+    15 ===\r\n  Trial 1: [F] AV-C\r\n  Trial 2: [B] AV-R\r\n  Trial 3: [K] AV-S\r\n 
+    Trial 4: [C] AV-H\r\n  Trial 5: [A] A-C\r\n  Trial 6: [L] A-H\r\n  Trial 7: [E]
+    A-S\r\n  Trial 8: [D] A-R\r\n  Trial 9: [I] V-H\r\n  Trial 10: [J] V-S\r\n  Trial
+    11: [G] V-R\r\n  Trial 12: [H] V-C\r\n\r\n=== PARTICIPANT 16 ===\r\n  Trial 1:
+    [L] A-H\r\n  Trial 2: [D] A-R\r\n  Trial 3: [E] A-S\r\n  Trial 4: [A] A-C\r\n 
+    Trial 5: [I] V-H\r\n  Trial 6: [J] V-S\r\n  Trial 7: [H] V-C\r\n  Trial 8: [G]
+    V-R\r\n  Trial 9: [B] AV-R\r\n  Trial 10: [K] AV-S\r\n  Trial 11: [C] AV-H\r\n 
+    Trial 12: [F] AV-C\r\n\r\n=== PARTICIPANT 17 ===\r\n  Trial 1: [I] V-H\r\n  Trial
+    2: [H] V-C\r\n  Trial 3: [J] V-S\r\n  Trial 4: [G] V-R\r\n  Trial 5: [F] AV-C\r\n 
+    Trial 6: [C] AV-H\r\n  Trial 7: [B] AV-R\r\n  Trial 8: [K] AV-S\r\n  Trial 9:
+    [A] A-C\r\n  Trial 10: [E] A-S\r\n  Trial 11: [L] A-H\r\n  Trial 12: [D] A-R\r\n\r\n===
+    PARTICIPANT 18 ===\r\n  Trial 1: [C] AV-H\r\n  Trial 2: [K] AV-S\r\n  Trial 3:
+    [B] AV-R\r\n  Trial 4: [F] AV-C\r\n  Trial 5: [A] A-C\r\n  Trial 6: [E] A-S\r\n 
+    Trial 7: [L] A-H\r\n  Trial 8: [D] A-R\r\n  Trial 9: [J] V-S\r\n  Trial 10: [I]
+    V-H\r\n  Trial 11: [H] V-C\r\n  Trial 12: [G] V-R\r\n\r\n=== PARTICIPANT 19 ===\r\n 
+    Trial 1: [E] A-S\r\n  Trial 2: [A] A-C\r\n  Trial 3: [D] A-R\r\n  Trial 4: [L]
+    A-H\r\n  Trial 5: [H] V-C\r\n  Trial 6: [J] V-S\r\n  Trial 7: [I] V-H\r\n  Trial
+    8: [G] V-R\r\n  Trial 9: [B] AV-R\r\n  Trial 10: [F] AV-C\r\n  Trial 11: [C]
+    AV-H\r\n  Trial 12: [K] AV-S\r\n\r\n=== PARTICIPANT 20 ===\r\n  Trial 1: [J]
+    V-S\r\n  Trial 2: [H] V-C\r\n  Trial 3: [G] V-R\r\n  Trial 4: [I] V-H\r\n  Trial
+    5: [C] AV-H\r\n  Trial 6: [F] AV-C\r\n  Trial 7: [B] AV-R\r\n  Trial 8: [K] AV-S\r\n 
+    Trial 9: [E] A-S\r\n  Trial 10: [A] A-C\r\n  Trial 11: [D] A-R\r\n  Trial 12:
+    [L] A-H\r\n\r\n=== PARTICIPANT 21 ===\r\n  Trial 1: [F] AV-C\r\n  Trial 2: [B]
+    AV-R\r\n  Trial 3: [C] AV-H\r\n  Trial 4: [K] AV-S\r\n  Trial 5: [D] A-R\r\n 
+    Trial 6: [L] A-H\r\n  Trial 7: [A] A-C\r\n  Trial 8: [E] A-S\r\n  Trial 9: [G]
+    V-R\r\n  Trial 10: [J] V-S\r\n  Trial 11: [H] V-C\r\n  Trial 12: [I] V-H\r\n\r\n===
+    PARTICIPANT 22 ===\r\n  Trial 1: [A] A-C\r\n  Trial 2: [E] A-S\r\n  Trial 3:
+    [L] A-H\r\n  Trial 4: [D] A-R\r\n  Trial 5: [H] V-C\r\n  Trial 6: [J] V-S\r\n 
+    Trial 7: [I] V-H\r\n  Trial 8: [G] V-R\r\n  Trial 9: [C] AV-H\r\n  Trial 10:
+    [F] AV-C\r\n  Trial 11: [B] AV-R\r\n  Trial 12: [K] AV-S\r\n\r\n=== PARTICIPANT
+    23 ===\r\n  Trial 1: [G] V-R\r\n  Trial 2: [H] V-C\r\n  Trial 3: [J] V-S\r\n 
+    Trial 4: [I] V-H\r\n  Trial 5: [K] AV-S\r\n  Trial 6: [F] AV-C\r\n  Trial 7:
+    [C] AV-H\r\n  Trial 8: [B] AV-R\r\n  Trial 9: [L] A-H\r\n  Trial 10: [A] A-C\r\n 
+    Trial 11: [D] A-R\r\n  Trial 12: [E] A-S\r\n\r\n=== PARTICIPANT 24 ===\r\n  Trial
+    1: [K] AV-S\r\n  Trial 2: [B] AV-R\r\n  Trial 3: [F] AV-C\r\n  Trial 4: [C] AV-H\r\n 
+    Trial 5: [D] A-R\r\n  Trial 6: [A] A-C\r\n  Trial 7: [L] A-H\r\n  Trial 8: [E]
+    A-S\r\n  Trial 9: [I] V-H\r\n  Trial 10: [J] V-S\r\n  Trial 11: [G] V-R\r\n 
+    Trial 12: [H] V-C\r\n\r\n=== PARTICIPANT 25 ===\r\n  Trial 1: [A] A-C\r\n  Trial
+    2: [D] A-R\r\n  Trial 3: [E] A-S\r\n  Trial 4: [L] A-H\r\n  Trial 5: [G] V-R\r\n 
+    Trial 6: [J] V-S\r\n  Trial 7: [I] V-H\r\n  Trial 8: [H] V-C\r\n  Trial 9: [F]
+    AV-C\r\n  Trial 10: [C] AV-H\r\n  Trial 11: [K] AV-S\r\n  Trial 12: [B] AV-R\r\n\r\n===
+    PARTICIPANT 26 ===\r\n  Trial 1: [G] V-R\r\n  Trial 2: [I] V-H\r\n  Trial 3:
+    [J] V-S\r\n  Trial 4: [H] V-C\r\n  Trial 5: [C] AV-H\r\n  Trial 6: [B] AV-R\r\n 
+    Trial 7: [F] AV-C\r\n  Trial 8: [K] AV-S\r\n  Trial 9: [D] A-R\r\n  Trial 10:
+    [E] A-S\r\n  Trial 11: [A] A-C\r\n  Trial 12: [L] A-H\r\n\r\n=== PARTICIPANT
+    27 ===\r\n  Trial 1: [F] AV-C\r\n  Trial 2: [C] AV-H\r\n  Trial 3: [K] AV-S\r\n 
+    Trial 4: [B] AV-R\r\n  Trial 5: [A] A-C\r\n  Trial 6: [D] A-R\r\n  Trial 7: [L]
+    A-H\r\n  Trial 8: [E] A-S\r\n  Trial 9: [J] V-S\r\n  Trial 10: [H] V-C\r\n  Trial
+    11: [I] V-H\r\n  Trial 12: [G] V-R\r\n\r\n=== PARTICIPANT 28 ===\r\n  Trial 1:
+    [A] A-C\r\n  Trial 2: [L] A-H\r\n  Trial 3: [E] A-S\r\n  Trial 4: [D] A-R\r\n 
+    Trial 5: [I] V-H\r\n  Trial 6: [H] V-C\r\n  Trial 7: [J] V-S\r\n  Trial 8: [G]
+    V-R\r\n  Trial 9: [K] AV-S\r\n  Trial 10: [C] AV-H\r\n  Trial 11: [F] AV-C\r\n 
+    Trial 12: [B] AV-R\r\n\r\n=== PARTICIPANT 29 ===\r\n  Trial 1: [H] V-C\r\n  Trial
+    2: [J] V-S\r\n  Trial 3: [G] V-R\r\n  Trial 4: [I] V-H\r\n  Trial 5: [C] AV-H\r\n 
+    Trial 6: [K] AV-S\r\n  Trial 7: [F] AV-C\r\n  Trial 8: [B] AV-R\r\n  Trial 9:
+    [A] A-C\r\n  Trial 10: [D] A-R\r\n  Trial 11: [L] A-H\r\n  Trial 12: [E] A-S\r\n\r\n===
+    PARTICIPANT 30 ===\r\n  Trial 1: [K] AV-S\r\n  Trial 2: [B] AV-R\r\n  Trial 3:
+    [C] AV-H\r\n  Trial 4: [F] AV-C\r\n  Trial 5: [D] A-R\r\n  Trial 6: [L] A-H\r\n 
+    Trial 7: [A] A-C\r\n  Trial 8: [E] A-S\r\n  Trial 9: [H] V-C\r\n  Trial 10: [G]
+    V-R\r\n  Trial 11: [I] V-H\r\n  Trial 12: [J] V-S\r\n\r\n"
+  conditionCodeLegend: "=== CONDITION CODE LEGEND (A\u2013L) ===\r\nA: A-C\r\nB:
+    AV-R\r\nC: AV-H\r\nD: A-R\r\nE: A-S\r\nF: AV-C\r\nG: V-R\r\nH: V-C\r\nI: V-H\r\nJ:
+    V-S\r\nK: AV-S\r\nL: A-H\r\n"
+  participantDoublePressWindowSec: 0.7
+  participantHoldResetSec: 0.8
 --- !u!1 &701989942
 GameObject:
   m_ObjectHideFlags: 0
@@ -11988,6 +12347,7 @@ Transform:
   m_Children:
   - {fileID: 1439570926}
   - {fileID: 485203745}
+  - {fileID: 370731170}
   - {fileID: 687752708}
   - {fileID: 1917248696}
   m_Father: {fileID: 0}
@@ -49148,18 +49508,23 @@ MonoBehaviour:
   xrArmatureRoot: {fileID: 1458927904960981055}
   decoyRenderer: {fileID: 1060449595}
   decoyArmatureRoot: {fileID: 1087932251}
-  decoyRigidbody: {fileID: 1087932252}
   autoFindDecoyColliders: 1
   decoyJointColliders: []
   jointProbeRadius: 0.01
   maxJointContactDistance: 0.025
-  indicator: {fileID: 0}
-  roughLayers:
+  contactLayers:
     serializedVersion: 2
-    m_Bits: 128
+    m_Bits: 4294967295
   contactProbeRadius: 0.06
+  useBroadphase: 1
+  broadphaseRadius: 0.12
+  jointsPerFrame: 6
+  contactDetailHz: 30
+  handTelemetrySide: 0
+  _telemetryChannelOverride: {fileID: 0}
   useMotionEffects: 1
   contactReleaseTime: 0
+  indicator: {fileID: 0}
   drawGizmos: 0
 --- !u!114 &5327992782894041725
 MonoBehaviour:
@@ -49175,8 +49540,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   globals: {fileID: 698117372}
   useGlobalTelemetry: 0
-  driver: {fileID: 5327992782894041724}
-  aggregateDrivers: []
+  handTelemetrySide: 0
+  _telemetryChannelOverride: {fileID: 0}
+  aggregateTelemetry: []
+  textureHandDriver: {fileID: 5327992782894041724}
+  aggregateTextureHandDrivers: []
 --- !u!114 &5327992782894041726
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -49191,8 +49559,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   globals: {fileID: 698117372}
   useGlobalTelemetry: 0
-  driver: {fileID: 5327992782894041724}
-  aggregateDrivers: []
+  handTelemetrySide: 0
+  _telemetryChannelOverride: {fileID: 0}
+  aggregateTelemetry: []
+  textureHandDriver: {fileID: 5327992782894041724}
+  aggregateTextureHandDrivers: []
 --- !u!114 &5327992782894041727
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -49205,9 +49576,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 584e7a4a216f54b4b88f8b95b7bbee72, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  handDriver: {fileID: 5327992782894041724}
   handRenderer: {fileID: 1060449595}
   thermalMaterial: {fileID: 2100000, guid: bf0cb5c0e520c5042a1776218f41ef26, type: 2}
+  handTelemetrySide: 0
+  _telemetryChannelOverride: {fileID: 0}
+  textureHandDriver: {fileID: 5327992782894041724}
 --- !u!114 &5327992782894041728
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -49228,6 +49601,13 @@ MonoBehaviour:
   planeThickness: 0
   autoFindDecoyColliders: 1
   decoyColliders: []
+  enableSurfaceStick: 1
+  stickEnterDistance: 0.018
+  stickReleaseDistance: 0.06
+  stickReleaseSpeed: 0.35
+  stickEnterFollowHz: 18
+  stickHoldFollowHz: 45
+  outwardVelocityFilterHz: 8
   drawGizmos: 1
   gizmoSize: 0.05
   planeColor: {r: 1, g: 0.2, b: 0.8, a: 0.7}

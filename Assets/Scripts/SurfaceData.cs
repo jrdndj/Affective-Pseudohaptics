@@ -12,5 +12,6 @@ public enum SurfaceType
 [DisallowMultipleComponent]
 public class SurfaceData : MonoBehaviour
 {
+    // Tag geometry the hand probes against (Hot/Cold/Rough/Smooth/Neutral).
     public SurfaceType surfaceType = SurfaceType.Neutral;
 }

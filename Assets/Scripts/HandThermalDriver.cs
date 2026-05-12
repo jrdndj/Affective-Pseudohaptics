@@ -1,36 +1,43 @@
 using UnityEngine;
+using UnityEngine.Serialization;
 
-[DefaultExecutionOrder(11010)]
+[DefaultExecutionOrder(11015)]
 public class HandThermalDriver : MonoBehaviour
 {
+    const float Epsilon = 1e-5f;
 
-    public HandTextureDriver handDriver;
+    [Header("References")]
     public SkinnedMeshRenderer handRenderer;
-
     public Material thermalMaterial;
 
-    Material[] _materials;
-    Material   _thermalInstance;
+    [Header("Telemetry")]
+    [Tooltip("Left or right")]
+    public HandTelemetrySide handTelemetrySide = HandTelemetrySide.Left;
+    [SerializeField, FormerlySerializedAs("telemetry"), Tooltip("Override; empty = globals.")]
+    HandTelemetryChannel _telemetryChannelOverride;
 
-    Vector3 _smoothedCenter;    // World-space center of heat
-    bool    _hasSmoothedCenter; // Tracking initialized
-    float   _currentIntensity;  // Current heat intensity
-    float   _smoothedTemp = 0.5f; // Temperature 0=cold, 0.5=neutral, 1=hot
+    [Header("Telemetry — legacy")]
+    [FormerlySerializedAs("handDriver"), Tooltip("If no channel")]
+    public HandTextureDriver textureHandDriver;
 
-    static readonly int ID_HeatCenterWS   = Shader.PropertyToID("_HeatCenterWS");
-    static readonly int ID_HeatRadius     = Shader.PropertyToID("_HeatRadius");
-    static readonly int ID_HeatIntensity  = Shader.PropertyToID("_HeatIntensity");
-    static readonly int ID_Temp01         = Shader.PropertyToID("_Temp01");
-    static readonly int ID_GlowCoverage   = Shader.PropertyToID("_GlowCoverage");
-    static readonly int ID_ColdColor      = Shader.PropertyToID("_ColdColor");
-    static readonly int ID_HotColor       = Shader.PropertyToID("_HotColor");
-    static readonly int ID_HotTintStrength  = Shader.PropertyToID("_HotTintStrength");
-    static readonly int ID_ColdTintStrength = Shader.PropertyToID("_ColdTintStrength");
+    Material[] _rendererMaterials;
+    Material _thermalMaterialInstance;
 
-    HapticsGlobalData.ThermalVisualSettings Cfg
-    {
-        get { return HapticsGlobalData.Instance.thermalVisual; }
-    }
+    Vector3 _smoothedHeatCenterWorld;
+    bool _hasSmoothedHeatCenter;
+    float _currentHeatIntensity;
+    float _smoothedHeatRadius;
+    float _smoothedTemperature01 = 0.5f;
+
+    static readonly int ShaderIdHeatCenterWorld = Shader.PropertyToID("_HeatCenterWS");
+    static readonly int ShaderIdHeatRadius = Shader.PropertyToID("_HeatRadius");
+    static readonly int ShaderIdHeatIntensity = Shader.PropertyToID("_HeatIntensity");
+    static readonly int ShaderIdTemperature01 = Shader.PropertyToID("_Temp01");
+    static readonly int ShaderIdGlowCoverage = Shader.PropertyToID("_GlowCoverage");
+    static readonly int ShaderIdColdColor = Shader.PropertyToID("_ColdColor");
+    static readonly int ShaderIdHotColor = Shader.PropertyToID("_HotColor");
+    static readonly int ShaderIdHotTintStrength = Shader.PropertyToID("_HotTintStrength");
+    static readonly int ShaderIdColdTintStrength = Shader.PropertyToID("_ColdTintStrength");
 
     void Awake()
     {
@@ -41,7 +48,8 @@ public class HandThermalDriver : MonoBehaviour
             return;
         }
 
-        if (!handRenderer) handRenderer = GetComponent<SkinnedMeshRenderer>();
+        if (!handRenderer)
+            handRenderer = GetComponent<SkinnedMeshRenderer>();
         if (!handRenderer)
         {
             Debug.LogError("[HandThermalDriver] No SkinnedMeshRenderer assigned.");
@@ -49,8 +57,8 @@ public class HandThermalDriver : MonoBehaviour
             return;
         }
 
-        _materials = handRenderer.materials;
-        if (_materials == null || _materials.Length == 0)
+        _rendererMaterials = handRenderer.materials;
+        if (_rendererMaterials == null || _rendererMaterials.Length == 0)
         {
             Debug.LogError("[HandThermalDriver] Renderer has no materials.");
             enabled = false;
@@ -64,104 +72,104 @@ public class HandThermalDriver : MonoBehaviour
             return;
         }
 
-        _thermalInstance = Instantiate(thermalMaterial);
-        _materials[0] = _thermalInstance;
-        handRenderer.materials = _materials;
+        _thermalMaterialInstance = Instantiate(thermalMaterial);
+        _rendererMaterials[0] = _thermalMaterialInstance;
+        handRenderer.materials = _rendererMaterials;
     }
 
-    void Update()
+    void LateUpdate()
     {
-        if (!handDriver || _thermalInstance == null || HapticsGlobalData.Instance == null)
+        if (_thermalMaterialInstance == null || HapticsGlobalData.Instance == null)
             return;
 
-        var cfg = Cfg;
-        float dt = Mathf.Max(Time.deltaTime, 1e-5f);
+        HandTelemetrySnapshot telemetrySnapshot;
+        var channel = _telemetryChannelOverride;
+        if (!channel && HapticsGlobalData.Instance != null)
+            channel = HapticsGlobalData.Instance.GetHandTelemetryChannel(handTelemetrySide);
 
-        bool hasSurface = handDriver.IsTouching && handDriver.CurrentSurface != null;
-        SurfaceType surfaceType = hasSurface
-            ? handDriver.CurrentSurface.surfaceType
-            : SurfaceType.Neutral;
+        if (channel)
+            telemetrySnapshot = channel.Latest;
+        else if (textureHandDriver)
+            telemetrySnapshot = HandTelemetrySnapshot.FromHandTextureDriver(textureHandDriver);
+        else
+            return;
 
-        bool isHot      = (surfaceType == SurfaceType.Hot);
-        bool isCold     = (surfaceType == SurfaceType.Cold);
+        var visualSettings = HapticsGlobalData.Instance.thermalVisual;
+        float deltaTime = Mathf.Max(Time.deltaTime, Epsilon);
+
+        float contactEnv01 = Mathf.Clamp01(telemetrySnapshot.ContactEnvelope01);
+        bool hasSurface = contactEnv01 > 1e-3f && telemetrySnapshot.Surface;
+        SurfaceType surfaceType = hasSurface ? telemetrySnapshot.SurfaceType : SurfaceType.Neutral;
+
+        bool isHot = surfaceType == SurfaceType.Hot;
+        bool isCold = surfaceType == SurfaceType.Cold;
         bool hasThermal = isHot || isCold;
 
-        // Temperature mapping: 0=cold, 0.5=neutral, 1=hot
-        float targetTemp;
-        if (!hasThermal)
-            targetTemp = 0.5f;
-        else
-            targetTemp = isHot ? 1.0f : 0.0f;
+        float targetTemperature01 = hasThermal ? (isHot ? 1f : 0f) : 0.5f;
+        float temperatureBlend = 1f - Mathf.Exp(-visualSettings.tempLerpSpeed * deltaTime);
+        _smoothedTemperature01 = Mathf.Lerp(_smoothedTemperature01, targetTemperature01, temperatureBlend);
 
-        float tempLerp = 1f - Mathf.Exp(-cfg.tempLerpSpeed * dt);
-        _smoothedTemp = Mathf.Lerp(_smoothedTemp, targetTemp, tempLerp);
+        float coverage01 = Mathf.Clamp01(telemetrySnapshot.ContactCoverage01);
 
-        // Contact coverage scales thermal effects
-        float coverage = Mathf.Clamp01(handDriver.ContactCoverage01);
+        float radiusScale = Mathf.Lerp(visualSettings.radiusByCoverage.x, visualSettings.radiusByCoverage.y, coverage01);
+        float intensityScale = Mathf.Lerp(visualSettings.intensityByCoverage.x, visualSettings.intensityByCoverage.y, coverage01);
 
-        // Thermal effect scales from configuration
-        float radiusScale   = Mathf.Lerp(cfg.radiusByCoverage.x,    cfg.radiusByCoverage.y,    coverage);
-        float intensScale   = Mathf.Lerp(cfg.intensityByCoverage.x, cfg.intensityByCoverage.y, coverage);
-        float glowCoverage  = cfg.glowCoverage;
-        float hotTintStrength  = cfg.hotTintStrength;
-        float coldTintStrength = cfg.coldTintStrength;
+        float glowCoverage = Mathf.Lerp(0.25f, visualSettings.glowCoverage, coverage01);
+        float hotTintStrength = visualSettings.hotTintStrength;
+        float coldTintStrength = visualSettings.coldTintStrength;
 
         if (hasThermal)
         {
             if (isHot)
             {
-                intensScale   *= cfg.hotIntensityMultiplier;
-                radiusScale   *= cfg.hotRadiusMultiplier;
-                glowCoverage   = cfg.hotGlowCoverage;
+                intensityScale *= visualSettings.hotIntensityMultiplier;
+                radiusScale *= visualSettings.hotRadiusMultiplier;
+                glowCoverage = visualSettings.hotGlowCoverage;
             }
-            else // cold
+            else
             {
-                intensScale   *= cfg.coldIntensityMultiplier;
-                radiusScale   *= cfg.coldRadiusMultiplier;
-                glowCoverage   = cfg.coldGlowCoverage;
+                intensityScale *= visualSettings.coldIntensityMultiplier;
+                radiusScale *= visualSettings.coldRadiusMultiplier;
+                glowCoverage = visualSettings.coldGlowCoverage;
             }
         }
 
-        float targetIntensity = hasThermal
-            ? cfg.baseHeatIntensity * intensScale
-            : 0f;
+        float targetIntensity = hasThermal ? visualSettings.baseHeatIntensity * intensityScale * contactEnv01 : 0f;
+        float intensityBlend = 1f - Mathf.Exp(-visualSettings.intensityFadeSpeed * deltaTime);
+        _currentHeatIntensity = Mathf.Lerp(_currentHeatIntensity, targetIntensity, intensityBlend);
 
-        float intenLerp = 1f - Mathf.Exp(-cfg.intensityFadeSpeed * dt);
-        _currentIntensity = Mathf.Lerp(_currentIntensity, targetIntensity, intenLerp);
+        Vector3 heatCenterWorld = telemetrySnapshot.ContactPoint;
+        Vector3 boundsCenterWorld = handRenderer.bounds.center;
+        if (heatCenterWorld == Vector3.zero && !hasSurface)
+            heatCenterWorld = boundsCenterWorld;
+        else
+            heatCenterWorld = Vector3.Lerp(heatCenterWorld, boundsCenterWorld, Mathf.Clamp01(coverage01 * 0.65f));
 
-        // Contact center position
-        Vector3 centerWS = handDriver.ContactPoint;
-
-        if ((centerWS == Vector3.zero && !hasSurface))
+        if (!_hasSmoothedHeatCenter)
         {
-            // Fallback if no contact data available
-            centerWS = handRenderer.bounds.center;
-        }
-
-        if (!_hasSmoothedCenter)
-        {
-            _smoothedCenter = centerWS;
-            _hasSmoothedCenter = true;
+            _smoothedHeatCenterWorld = heatCenterWorld;
+            _hasSmoothedHeatCenter = true;
         }
         else
         {
-            float cLerp = 1f - Mathf.Exp(-cfg.centerLerpSpeed * dt);
-            _smoothedCenter = Vector3.Lerp(_smoothedCenter, centerWS, cLerp);
+            float centerBlend = 1f - Mathf.Exp(-visualSettings.centerLerpSpeed * deltaTime);
+            _smoothedHeatCenterWorld = Vector3.Lerp(_smoothedHeatCenterWorld, heatCenterWorld, centerBlend);
         }
 
-        // Push parameters to shader
-        float dynamicRadius = cfg.baseHeatRadius * radiusScale;
+        float patchBoost = Mathf.Lerp(1.0f, 2.2f, Mathf.SmoothStep(0.25f, 1.0f, coverage01));
 
-        _thermalInstance.SetVector(ID_HeatCenterWS, _smoothedCenter);
-        _thermalInstance.SetFloat(ID_HeatRadius, dynamicRadius);
-        _thermalInstance.SetFloat(ID_HeatIntensity, _currentIntensity);
-        _thermalInstance.SetFloat(ID_Temp01, _smoothedTemp);
-        _thermalInstance.SetFloat(ID_GlowCoverage, glowCoverage);
+        float grow01 = Mathf.SmoothStep(0.0f, 1.0f, contactEnv01);
+        float dynamicRadiusTarget = visualSettings.baseHeatRadius * radiusScale * patchBoost * Mathf.Lerp(0.35f, 1.0f, grow01);
+        _smoothedHeatRadius = Mathf.Lerp(_smoothedHeatRadius, dynamicRadiusTarget, intensityBlend);
 
-        // Apply colors and tint from configuration
-        _thermalInstance.SetColor(ID_HotColor,  cfg.hotColor);
-        _thermalInstance.SetColor(ID_ColdColor, cfg.coldColor);
-        _thermalInstance.SetFloat(ID_HotTintStrength,  hotTintStrength);
-        _thermalInstance.SetFloat(ID_ColdTintStrength, coldTintStrength);
+        _thermalMaterialInstance.SetVector(ShaderIdHeatCenterWorld, _smoothedHeatCenterWorld);
+        _thermalMaterialInstance.SetFloat(ShaderIdHeatRadius, _smoothedHeatRadius);
+        _thermalMaterialInstance.SetFloat(ShaderIdHeatIntensity, _currentHeatIntensity);
+        _thermalMaterialInstance.SetFloat(ShaderIdTemperature01, _smoothedTemperature01);
+        _thermalMaterialInstance.SetFloat(ShaderIdGlowCoverage, glowCoverage);
+        _thermalMaterialInstance.SetColor(ShaderIdHotColor, visualSettings.hotColor);
+        _thermalMaterialInstance.SetColor(ShaderIdColdColor, visualSettings.coldColor);
+        _thermalMaterialInstance.SetFloat(ShaderIdHotTintStrength, hotTintStrength);
+        _thermalMaterialInstance.SetFloat(ShaderIdColdTintStrength, coldTintStrength);
     }
 }

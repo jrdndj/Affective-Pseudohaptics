@@ -10,6 +10,13 @@ public enum SensoryMode
     AudioVisual
 }
 
+public enum DebugAVCouplingMode
+{
+    Baseline,
+    Congruent,
+    Incongruent
+}
+
 [Serializable]
 public struct TrialCondition
 {
@@ -29,8 +36,11 @@ public class TestManager : MonoBehaviour
     [Header("Debug Mode")]
     public bool debugMode = false;  // Simple AV-V-A sequence with all surfaces in order
 
+    [SerializeField]
+    DebugAVCouplingMode debugAVCouplingMode = DebugAVCouplingMode.Congruent;
+
     [Header("Participants / Trials")]
-    public int participantCount = 12;
+    public int participantCount = 30;
     public int trialsPerParticipant = 12;  // Fixed at 12 conditions (3 modes × 4 surfaces)
     public int randomSeed = 12345;
 
@@ -65,6 +75,12 @@ public class TestManager : MonoBehaviour
     [TextArea(5, 10)]
     [SerializeField]
     private string conditionCodeLegend = "";
+
+    [Header("Participant Button (Normal Mode)")]
+    [Tooltip("Max gap (seconds) between taps to count as a double press.")]
+    public float participantDoublePressWindowSec = 0.35f;
+    [Tooltip("Hold duration (seconds) to reset to Participant 1.")]
+    public float participantHoldResetSec = 0.8f;
 
     // Static design constants
     private static readonly SurfaceType[] s_surfaces =
@@ -127,6 +143,18 @@ public class TestManager : MonoBehaviour
     private int  _trialIndex;             // 0..trialsPerParticipant-1
     private bool _showingTransitionScreen;
 
+    // Debug-only telemetry routing: publish remapped snapshots for audio consumers,
+    // while visuals continue to use the original global channels.
+    HandTelemetryChannel _leftAudioTelemetry;
+    HandTelemetryChannel _rightAudioTelemetry;
+    bool _debugAudioTelemetryRouted;
+
+    bool _participantButtonIsDown;
+    bool _participantButtonHoldHandled;
+    float _participantButtonDownTime;
+    float _participantLastTapReleaseTime;
+    int _participantTapCount;
+
     void Awake()
     {
         if (!testSurface)
@@ -146,6 +174,41 @@ public class TestManager : MonoBehaviour
 
         // In editor: keep debug info / mapping visible
         EnsureDesignGenerated();
+    }
+
+    void Update()
+    {
+        ProcessParticipantButtonInput();
+
+        if (debugMode)
+        {
+            // Publish remapped telemetry early in the frame so audio consumers (LateUpdate) read it.
+            PublishDebugAudioTelemetry();
+        }
+    }
+
+    void ProcessParticipantButtonInput()
+    {
+        if (debugMode)
+            return;
+
+        float now = Time.time;
+
+        if (_participantButtonIsDown &&
+            !_participantButtonHoldHandled &&
+            now - _participantButtonDownTime >= participantHoldResetSec)
+        {
+            _participantButtonHoldHandled = true;
+            _participantTapCount = 0;
+            JumpToParticipant(0);
+        }
+
+        if (_participantTapCount == 1 &&
+            now - _participantLastTapReleaseTime >= participantDoublePressWindowSec)
+        {
+            _participantTapCount = 0;
+            AdvanceParticipant(1);
+        }
     }
 
     // Design generation
@@ -377,90 +440,74 @@ public class TestManager : MonoBehaviour
     // Input handlers (XRI buttons)
     public void OnNextPressed()  => StepForward();
     public void OnPrevPressed()  => StepBackward();
+    public void OnParticipantButtonReleased()
+    {
+        if (debugMode)
+            return;
+
+        if (!_participantButtonIsDown)
+            return;
+
+        _participantButtonIsDown = false;
+
+        // Hold already handled reset while button was down.
+        if (_participantButtonHoldHandled)
+            return;
+
+        float now = Time.time;
+        if (_participantTapCount == 1 &&
+            now - _participantLastTapReleaseTime < participantDoublePressWindowSec)
+        {
+            _participantTapCount = 0;
+            AdvanceParticipant(10);
+            return;
+        }
+
+        _participantTapCount = 1;
+        _participantLastTapReleaseTime = now;
+    }
 
     // Navigation
     void StepForward()
     {
-        // Transition screen: jump to next participant's first trial
-        if (_showingTransitionScreen)
-        {
-            if (_participantIndex < participantCount - 1)
-            {
-                _participantIndex++;
-                _trialIndex = 0;
-                _showingTransitionScreen = false;
-                ApplyCurrentTrialState();
-            }
-            else
-            {
-                // Last participant: stay on end screen
-                ApplyFinalEndScreen();
-            }
+        int trialCount = DebugEffectiveTrialCount();
+        if (trialCount <= 0)
             return;
-        }
 
-        // Inside trials
-        if (_trialIndex < trialsPerParticipant - 1)
-        {
-            _trialIndex++;
-            ApplyCurrentTrialState();
-        }
-        else
-        {
-            // At last trial: debug mode stays, normal mode shows transition
-            if (debugMode)
-            {
-                // Debug: stay at last condition
-                return;
-            }
-
-            if (_participantIndex < participantCount - 1)
-            {
-                _showingTransitionScreen = true;
-                ApplyTransitionScreen();
-            }
-            else
-            {
-                // End of all trials
-                _showingTransitionScreen = true;
-                ApplyFinalEndScreen();
-            }
-        }
+        _showingTransitionScreen = false;
+        _trialIndex = (_trialIndex + 1) % trialCount;
+        ApplyCurrentTrialState();
     }
 
     void StepBackward()
     {
-        // Transition screen: go back to last trial
-        if (_showingTransitionScreen)
-        {
-            _showingTransitionScreen = false;
-            _trialIndex = trialsPerParticipant - 1;
-            ApplyCurrentTrialState();
+        int trialCount = DebugEffectiveTrialCount();
+        if (trialCount <= 0)
             return;
-        }
 
-        // Inside trials
-        if (_trialIndex > 0)
-        {
-            _trialIndex--;
-            ApplyCurrentTrialState();
-        }
-        else
-        {
-            // At first trial: go to previous participant's end
-            if (_participantIndex > 0)
-            {
-                // Move to previous participant's transition
-                _participantIndex--;
-                _trialIndex = trialsPerParticipant - 1;
-                _showingTransitionScreen = true;
-                ApplyTransitionScreen();
-            }
-            else
-            {
-                // Already at start
-            }
-        }
+        _showingTransitionScreen = false;
+        _trialIndex = (_trialIndex - 1 + trialCount) % trialCount;
+        ApplyCurrentTrialState();
+    }
+
+    void AdvanceParticipant(int delta)
+    {
+        if (participantCount <= 0)
+            return;
+
+        int next = Mathf.Clamp(_participantIndex + delta, 0, participantCount - 1);
+        if (next == _participantIndex)
+            return;
+
+        JumpToParticipant(next);
+    }
+
+    void JumpToParticipant(int participantIndex)
+    {
+        _participantIndex = Mathf.Clamp(participantIndex, 0, Mathf.Max(0, participantCount - 1));
+        _trialIndex = 0;
+        _showingTransitionScreen = false;
+        ApplyCurrentTrialState();
     }
 
     // State management
@@ -493,15 +540,58 @@ public class TestManager : MonoBehaviour
 
         TrialCondition cond = trials[_trialIndex];
 
-        // Set surface and apply sensory mode to both hands
-        if (testSurface)
-            testSurface.surfaceType = cond.surface;
-        ApplySensoryMode(cond.mode);
+        // Incongruent mode publishes remapped telemetry into transient channels. If we leave that
+        // wiring active when switching to Baseline/Congruent, audio reads stale SOs and goes silent.
+        if (_debugAudioTelemetryRouted &&
+            (!debugMode || debugAVCouplingMode != DebugAVCouplingMode.Incongruent))
+            TeardownDebugAudioTelemetryRouting();
+
+        SurfaceType visualSurface = cond.surface;
+        SurfaceType audioSurface = cond.surface;
+        SensoryMode appliedMode = cond.mode;
+
+        int trialCount = DebugEffectiveTrialCount();
+        int effectiveTrialIndex = _trialIndex;
+        if (debugMode && trialCount > 0)
+            effectiveTrialIndex = Mathf.Clamp(_trialIndex, 0, trialCount - 1);
+
+        if (debugMode && debugAVCouplingMode == DebugAVCouplingMode.Baseline)
+        {
+            visualSurface = SurfaceType.Neutral;
+            audioSurface = SurfaceType.Neutral;
+            if (testSurface)
+                testSurface.surfaceType = visualSurface;
+            DisableAllCues();
+        }
+        else
+        {
+            if (debugMode && debugAVCouplingMode == DebugAVCouplingMode.Incongruent)
+            {
+                // Debug incongruent: force AV, but swap ONLY audio relative to visual.
+                appliedMode = SensoryMode.AudioVisual;
+
+                // In this mode we want exactly 4 conditions:
+                // Rough audio + Smooth visual
+                // Smooth audio + Rough visual
+                // Hot audio + Cold visual
+                // Cold audio + Hot visual
+                visualSurface = IncongruentVisualSurfaceByIndex(effectiveTrialIndex);
+                audioSurface = SwapSurfaceWithinTextureThermal(visualSurface);
+            }
+
+            // Set surface and apply sensory mode to both hands
+            if (testSurface)
+                testSurface.surfaceType = visualSurface;
+            ApplySensoryMode(appliedMode);
+
+            if (debugMode && debugAVCouplingMode == DebugAVCouplingMode.Incongruent)
+                EnsureDebugAudioTelemetryRouting();
+        }
 
         // Update UI label
         if (label)
         {
-            string modeText = cond.mode switch
+            string modeText = appliedMode switch
             {
                 SensoryMode.AudioOnly    => "Audio Only",
                 SensoryMode.VisualOnly   => "Visual Only",
@@ -509,7 +599,7 @@ public class TestManager : MonoBehaviour
                 _                        => "Unknown"
             };
 
-            string surfaceText = cond.surface switch
+            string visualSurfaceText = visualSurface switch
             {
                 SurfaceType.Hot    => "Hot",
                 SurfaceType.Cold   => "Cold",
@@ -519,13 +609,42 @@ public class TestManager : MonoBehaviour
             };
 
             int participantDisplay = _participantIndex + 1;
-            int trialDisplay       = _trialIndex + 1;
+            int trialDisplay       = effectiveTrialIndex + 1;
 
             if (debugMode)
             {
-                label.text =
-                    $"Condition: {trialDisplay} / {trialsPerParticipant}\n" +
-                    $"Modality: {modeText} \n Effect: {surfaceText}";
+                string couplingText = debugAVCouplingMode switch
+                {
+                    DebugAVCouplingMode.Baseline => "Baseline",
+                    DebugAVCouplingMode.Congruent => "Congruent",
+                    DebugAVCouplingMode.Incongruent => "Incongruent",
+                    _ => "Unknown"
+                };
+
+                if (debugAVCouplingMode == DebugAVCouplingMode.Incongruent)
+                {
+                    string audioSurfaceText = audioSurface switch
+                    {
+                        SurfaceType.Hot => "Hot",
+                        SurfaceType.Cold => "Cold",
+                        SurfaceType.Rough => "Rough",
+                        SurfaceType.Smooth => "Smooth",
+                        _ => "Neutral"
+                    };
+
+                    label.text =
+                        $"Condition: {trialDisplay} / {trialCount}\n" +
+                        $"Mode: {couplingText}\n" +
+                        $"Audio Effect: {audioSurfaceText}\n" +
+                        $"Visual Effect: {visualSurfaceText}";
+                }
+                else
+                {
+                    label.text =
+                        $"Condition: {trialDisplay} / {trialCount}\n" +
+                        $"Mode: {couplingText}\n" +
+                        $"Modality: {modeText} \n Effect: {visualSurfaceText}";
+                }
             }
             else
             {
@@ -599,5 +718,182 @@ public class TestManager : MonoBehaviour
         if (rightHandThermalDriver) rightHandThermalDriver.enabled = false;
         if (leftHandTextureDriver)  leftHandTextureDriver.useMotionEffects = false;
         if (rightHandTextureDriver) rightHandTextureDriver.useMotionEffects = false;
+    }
+
+    int DebugEffectiveTrialCount()
+    {
+        if (!debugMode)
+            return trialsPerParticipant;
+        return debugAVCouplingMode == DebugAVCouplingMode.Incongruent ? 4 : trialsPerParticipant;
+    }
+
+    static SurfaceType IncongruentVisualSurfaceByIndex(int i)
+    {
+        int idx = Mathf.Abs(i) % 4;
+        return idx switch
+        {
+            0 => SurfaceType.Smooth, // rough audio
+            1 => SurfaceType.Rough,  // smooth audio
+            2 => SurfaceType.Cold,   // hot audio
+            3 => SurfaceType.Hot,    // cold audio
+            _ => SurfaceType.Neutral
+        };
+    }
+
+    static SurfaceType SwapSurfaceWithinTextureThermal(SurfaceType surface)
+    {
+        return surface switch
+        {
+            SurfaceType.Hot => SurfaceType.Cold,
+            SurfaceType.Cold => SurfaceType.Hot,
+            SurfaceType.Rough => SurfaceType.Smooth,
+            SurfaceType.Smooth => SurfaceType.Rough,
+            _ => surface
+        };
+    }
+
+    [ContextMenu("Debug/Cycle AV Coupling Mode (Baseline → Congruent → Incongruent)")]
+    public void CycleDebugAVCouplingMode()
+    {
+        if (!debugMode)
+        {
+            _participantButtonIsDown = true;
+            _participantButtonHoldHandled = false;
+            _participantButtonDownTime = Time.time;
+            return;
+        }
+
+        debugAVCouplingMode = debugAVCouplingMode switch
+        {
+            DebugAVCouplingMode.Baseline => DebugAVCouplingMode.Congruent,
+            DebugAVCouplingMode.Congruent => DebugAVCouplingMode.Incongruent,
+            DebugAVCouplingMode.Incongruent => DebugAVCouplingMode.Baseline,
+            _ => DebugAVCouplingMode.Congruent
+        };
+
+        ApplyCurrentTrialState();
+    }
+
+    void EnsureDebugAudioTelemetryRouting()
+    {
+        if (_debugAudioTelemetryRouted)
+            return;
+
+        // Create per-hand transient channels for debug audio. These are not saved as assets.
+        _leftAudioTelemetry = ScriptableObject.CreateInstance<HandTelemetryChannel>();
+        _rightAudioTelemetry = ScriptableObject.CreateInstance<HandTelemetryChannel>();
+        _leftAudioTelemetry.name = "LeftHandTelemetry_DebugAudio";
+        _rightAudioTelemetry.name = "RightHandTelemetry_DebugAudio";
+
+        if (leftHandTextureAudio)
+        {
+            leftHandTextureAudio.useGlobalTelemetry = true;
+            leftHandTextureAudio.aggregateTelemetry = new[] { _leftAudioTelemetry };
+        }
+
+        if (rightHandTextureAudio)
+        {
+            rightHandTextureAudio.useGlobalTelemetry = true;
+            rightHandTextureAudio.aggregateTelemetry = new[] { _rightAudioTelemetry };
+        }
+
+        if (leftHandThermalAudio)
+        {
+            leftHandThermalAudio.useGlobalTelemetry = true;
+            leftHandThermalAudio.aggregateTelemetry = new[] { _leftAudioTelemetry };
+        }
+
+        if (rightHandThermalAudio)
+        {
+            rightHandThermalAudio.useGlobalTelemetry = true;
+            rightHandThermalAudio.aggregateTelemetry = new[] { _rightAudioTelemetry };
+        }
+
+        _debugAudioTelemetryRouted = true;
+    }
+
+    void TeardownDebugAudioTelemetryRouting()
+    {
+        if (!_debugAudioTelemetryRouted)
+            return;
+
+        // Restore scene defaults: per-hand telemetry from HapticsGlobalData (see Main.unity useGlobalTelemetry: 0).
+        void ResetTextureAudio(HandTextureAudio a)
+        {
+            if (!a) return;
+            a.useGlobalTelemetry = false;
+            a.aggregateTelemetry = null;
+        }
+
+        void ResetThermalAudio(HandThermalAudio a)
+        {
+            if (!a) return;
+            a.useGlobalTelemetry = false;
+            a.aggregateTelemetry = null;
+        }
+
+        ResetTextureAudio(leftHandTextureAudio);
+        ResetTextureAudio(rightHandTextureAudio);
+        ResetThermalAudio(leftHandThermalAudio);
+        ResetThermalAudio(rightHandThermalAudio);
+
+        if (_leftAudioTelemetry)
+        {
+            Destroy(_leftAudioTelemetry);
+            _leftAudioTelemetry = null;
+        }
+
+        if (_rightAudioTelemetry)
+        {
+            Destroy(_rightAudioTelemetry);
+            _rightAudioTelemetry = null;
+        }
+
+        _debugAudioTelemetryRouted = false;
+    }
+
+    void PublishDebugAudioTelemetry()
+    {
+        if (!debugMode || debugAVCouplingMode != DebugAVCouplingMode.Incongruent)
+            return;
+
+        EnsureDebugAudioTelemetryRouting();
+
+        if (_leftAudioTelemetry == null || _rightAudioTelemetry == null)
+            return;
+
+        var globals = HapticsGlobalData.Instance;
+        if (!globals)
+            return;
+
+        var leftSrc = globals.leftHandTelemetryChannel;
+        var rightSrc = globals.rightHandTelemetryChannel;
+        if (!leftSrc || !rightSrc)
+            return;
+
+        _leftAudioTelemetry.Publish(RemapSurfaceForIncongruentAudio(leftSrc.Latest));
+        _rightAudioTelemetry.Publish(RemapSurfaceForIncongruentAudio(rightSrc.Latest));
+    }
+
+    static HandTelemetrySnapshot RemapSurfaceForIncongruentAudio(in HandTelemetrySnapshot s)
+    {
+        SurfaceType mapped = SwapSurfaceWithinTextureThermal(s.SurfaceType);
+        if (mapped == s.SurfaceType)
+            return s;
+
+        return new HandTelemetrySnapshot(
+            s.IsTouching,
+            s.IsTouchingRaw,
+            s.IsSliding,
+            s.ContactEnvelope01,
+            s.TangentialSpeed,
+            s.TangentialVelocity,
+            s.ContactNormal,
+            s.ContactPoint,
+            s.ContactCoverage01,
+            s.CurrentRoughness01,
+            mapped,
+            s.Surface
+        );
     }
 }

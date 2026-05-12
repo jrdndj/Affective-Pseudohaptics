@@ -1,86 +1,104 @@
 using UnityEngine;
+using UnityEngine.Serialization;
 
 [RequireComponent(typeof(AudioSource))]
-[DefaultExecutionOrder(11021)]
+[DefaultExecutionOrder(11031)]
 public class HandThermalAudio : MonoBehaviour
 {
+    const float ThermalOutputSafetyGain = 0.68f;
+    const float ContactLoudnessFloor = 0.84f;
+    const float SpeedLoudnessFloor = 0.78f;
+    const float SpeedLoudnessExponent = 0.70f;
+    const float HotSurfaceGain = 0.95f;
+    const float ColdSurfaceGain = 0.90f;
+    const float CrackleStaticDamping = 0.60f;
+
+    [Header("References")]
     public HapticsGlobalData globals;
 
-    public bool useGlobalTelemetry = false;
-    public HandTextureDriver driver;              // Local hand (default)
-    public HandTextureDriver[] aggregateDrivers;  // Multiple hands when useGlobalTelemetry = true
+    [Header("Mode")]
+    public bool useGlobalTelemetry;
 
-    // Internal state
-    AudioSource _src;
-    int _sr;
+    [Header("Telemetry")]
+    public HandTelemetrySide handTelemetrySide = HandTelemetrySide.Left;
+    [SerializeField, FormerlySerializedAs("telemetry"), Tooltip("Optional override. Leave empty to use HapticsGlobalData.")]
+    HandTelemetryChannel _telemetryChannelOverride;
+    [Tooltip("When useGlobalTelemetry: merge these. If empty, uses Global Manager left + right.")]
+    public HandTelemetryChannel[] aggregateTelemetry;
 
-    HapticsGlobalData.ThermalAudioSettings _settings;
+    [Header("Telemetry — legacy")]
+    [FormerlySerializedAs("driver")]
+    public HandTextureDriver textureHandDriver;
+    [FormerlySerializedAs("aggregateDrivers")]
+    public HandTextureDriver[] aggregateTextureHandDrivers;
 
-    float _spd;
-    bool  _touchNow, _touchPrev;
-    SurfaceType _surfaceType;
+    AudioSource _audioSource;
+    int _outputSampleRate;
+    HapticsGlobalData.ThermalAudioSettings _thermalAudioSettings;
+
+    float _tangentialSpeedCached;
+    bool _touchingNow;
+    bool _touchingPreviousFrame;
+    SurfaceType _surfaceTypeCached;
 
     bool _thermalHotActive;
     bool _thermalColdActive;
 
-    float _ctlTimer;
-    float _time;
+    float _controlTimer;
+    float _dspTimeSeconds;
 
-    // Global thermal contact envelope
-    float _onEnv;
+    float _contactEnvelopeSmoothed;
 
-    // Per-mode envelopes
-    float _thermalEnvHot, _thermalEnvCold;
+    float _thermalEnvelopeHot;
+    float _thermalEnvelopeCold;
 
-    // Hot filter for sizzling high-pass
-    float _hotLp;
-    float _hotA;
+    float _hotNoiseLowpass;
+    float _hotNoiseLowpassAlpha;
 
-    // Cold bands: glacier rumble + ice detail
-    float _coldLpLow;
-    float _coldLpHigh;
-    float _coldALow;
-    float _coldAHigh;
+    float _coldNoiseLowpassLow;
+    float _coldNoiseLowpassHigh;
+    float _coldLowpassAlphaLow;
+    float _coldLowpassAlphaHigh;
 
-    // Crack noise high-pass filter
-    float _crackHp;
-    float _crackHpA;
+    float _crackHighpass;
+    float _crackHighpassAlpha;
 
-    // Cold crack events: multi-part ice-break sounds
     const int MaxSubCracks = 3;
-    struct SubCrack
+    struct SubCrackEvent
     {
-        public bool on;
-        public float t;
-        public float startDelay;
-        public float tau;
-        public float amp;
-        public float color;  // Brightness 0..1
+        public bool IsActive;
+        public float TimeSeconds;
+        public float StartDelaySeconds;
+        public float DecayTau;
+        public float Amplitude;
+        public float Brightness01;
     }
-    SubCrack[] _subCracks = new SubCrack[MaxSubCracks];
 
-    float _crackTimer = 999f;  // Seconds until next crack event
-    bool  _coldWasActive = false;  // Detect cold contact rising edge
+    SubCrackEvent[] _subCrackEvents = new SubCrackEvent[MaxSubCracks];
 
-    // Cold slow LFO for subtle modulation
-    float _coldLfoPhase;
+    float _nextCrackIntervalSeconds = 999f;
+    bool _coldThermalWasActive;
 
-    // Pseudo-random generator
-    uint _rng = 0xC0FFEEu;
-    float White()
+    float _coldSlowLfoPhase;
+
+    uint _randomState = 0xC0FFEEu;
+
+    float WhiteNoise()
     {
-        _rng = 1664525u * _rng + 1013904223u;
-        return ((_rng >> 9) & 0x7FFFFF) / 8388607f * 2f - 1f;
+        _randomState = 1664525u * _randomState + 1013904223u;
+        return ((_randomState >> 9) & 0x7FFFFF) / 8388607f * 2f - 1f;
     }
-    float Rand01()
+
+    float Random01()
     {
-        _rng = 1103515245u * _rng + 12345u;
-        return ((_rng >> 8) & 0xFFFFFF) / 16777215f;
+        _randomState = 1103515245u * _randomState + 12345u;
+        return ((_randomState >> 8) & 0xFFFFFF) / 16777215f;
     }
 
     void Awake()
     {
-        if (!globals) globals = HapticsGlobalData.Instance;
+        if (!globals)
+            globals = HapticsGlobalData.Instance;
         if (!globals)
         {
             Debug.LogError("[HandThermalAudio] No HapticsGlobalData found.");
@@ -88,285 +106,273 @@ public class HandThermalAudio : MonoBehaviour
             return;
         }
 
-        _settings = globals.thermalAudio;
-        _src = GetComponent<AudioSource>();
-        _src.playOnAwake = true;
-        _src.loop = true;
-        _sr = AudioSettings.outputSampleRate;
+        _thermalAudioSettings = globals.thermalAudio;
+        _audioSource = GetComponent<AudioSource>();
+        _audioSource.playOnAwake = true;
+        _audioSource.loop = true;
+        _outputSampleRate = AudioSettings.outputSampleRate;
 
-        if (_src.clip == null)
-        {
-            var silent = AudioClip.Create("ProcSilent_Thermal", 4, 1, _sr, false);
-            _src.clip = silent;
-        }
-        if (!_src.isPlaying) _src.Play();
-        RecomputeFilterCoeffs(_settings);
+        if (_audioSource.clip == null)
+            _audioSource.clip = AudioClip.Create("ProcSilent_Thermal", 4, 1, _outputSampleRate, false);
+        if (!_audioSource.isPlaying)
+            _audioSource.Play();
+
+        RecomputeThermalFilterCoefficients(in _thermalAudioSettings);
     }
 
     void OnEnable()
     {
-        if (!globals) globals = HapticsGlobalData.Instance;
+        if (!globals)
+            globals = HapticsGlobalData.Instance;
         if (globals != null)
-            globals.OnGlobalsChanged += HandleGlobalsChanged;
+            globals.OnGlobalsChanged += OnHapticsGlobalsChanged;
     }
 
     void OnDisable()
     {
         if (globals != null)
-            globals.OnGlobalsChanged -= HandleGlobalsChanged;
+            globals.OnGlobalsChanged -= OnHapticsGlobalsChanged;
     }
 
-    void HandleGlobalsChanged()
+    void OnHapticsGlobalsChanged()
     {
-        if (globals == null) return;
-        _settings = globals.thermalAudio;
-        RecomputeFilterCoeffs(_settings);
+        if (globals == null)
+            return;
+        _thermalAudioSettings = globals.thermalAudio;
+        RecomputeThermalFilterCoefficients(in _thermalAudioSettings);
     }
 
-    void RecomputeFilterCoeffs(in HapticsGlobalData.ThermalAudioSettings t)
+    void RecomputeThermalFilterCoefficients(in HapticsGlobalData.ThermalAudioSettings thermalAudio)
     {
-        float dt = 1f / Mathf.Max(1, _sr);
+        float dt = 1f / Mathf.Max(1, _outputSampleRate);
 
-        // Hot LP for high-pass derivation (sizzle)
-        _hotA = 1f - Mathf.Exp(-2f * Mathf.PI * Mathf.Max(50f, t.hotNoiseCutoffHz) * dt);
+        _hotNoiseLowpassAlpha = 1f - Mathf.Exp(-2f * Mathf.PI * Mathf.Max(50f, thermalAudio.hotNoiseCutoffHz) * dt);
 
-        // Cold: deep rumble + mid/high band for icy detail
-        float lowCut = 140f;  // Glacier hum
-        float hiCut  = Mathf.Max(1200f, t.coldNoiseCutoffHz);
+        const float coldRumbleLowCutHz = 140f;
+        float coldHighCutHz = Mathf.Max(1200f, thermalAudio.coldNoiseCutoffHz);
+        _coldLowpassAlphaLow = 1f - Mathf.Exp(-2f * Mathf.PI * coldRumbleLowCutHz * dt);
+        _coldLowpassAlphaHigh = 1f - Mathf.Exp(-2f * Mathf.PI * coldHighCutHz * dt);
 
-        _coldALow  = 1f - Mathf.Exp(-2f * Mathf.PI * lowCut * dt);
-        _coldAHigh = 1f - Mathf.Exp(-2f * Mathf.PI * hiCut  * dt);
-
-        // Crack HP filter for sharp, broadband impulses
-        float crackCut = Mathf.Clamp(t.coldNoiseCutoffHz * 1.8f, 3000f, 9500f);
-        _crackHpA = 1f - Mathf.Exp(-2f * Mathf.PI * crackCut * dt);
+        float crackCutHz = Mathf.Clamp(thermalAudio.coldNoiseCutoffHz * 1.8f, 3000f, 9500f);
+        _crackHighpassAlpha = 1f - Mathf.Exp(-2f * Mathf.PI * crackCutHz * dt);
     }
 
-    int SurfacePriority(SurfaceType st)
+    void LateUpdate()
     {
-        switch (st)
+        HandTelemetrySnapshot snapshot;
+        if (useGlobalTelemetry)
         {
-            case SurfaceType.Hot:  return 2;
-            case SurfaceType.Cold: return 1;
-            default:               return 0;
-        }
-    }
+            HandTelemetryChannel[] channelGroup = null;
+            if (aggregateTelemetry != null && aggregateTelemetry.Length > 0)
+                channelGroup = aggregateTelemetry;
+            else if (HapticsGlobalData.Instance != null)
+                channelGroup = HapticsGlobalData.Instance.GetBothHandTelemetryChannels();
 
-    void Update()
-    {
-        bool touching = false;
-        float spd     = 0f;
-        SurfaceType surfaceType = SurfaceType.Neutral;
-
-        if (useGlobalTelemetry && aggregateDrivers != null && aggregateDrivers.Length > 0)
-        {
-            int bestPriority = -1;
-
-            for (int i = 0; i < aggregateDrivers.Length; i++)
-            {
-                var d = aggregateDrivers[i];
-                if (!d) continue;
-
-                touching |= d.IsTouching;
-                spd = Mathf.Max(spd, d.TangentialSpeed);
-
-                if (d.IsTouching && d.CurrentSurface != null)
-                {
-                    var ttype = d.CurrentSurface.surfaceType;
-                    int p = SurfacePriority(ttype);
-                    if (p > bestPriority)
-                    {
-                        bestPriority = p;
-                        surfaceType = ttype;
-                    }
-                }
-            }
+            if (channelGroup != null && channelGroup.Length > 0)
+                snapshot = HandTelemetrySnapshot.MergeThermalPriority(channelGroup);
+            else if (aggregateTextureHandDrivers != null && aggregateTextureHandDrivers.Length > 0)
+                snapshot = HandTelemetrySnapshot.MergeThermalPriority(aggregateTextureHandDrivers);
+            else
+                return;
         }
         else
         {
-            if (!driver) return;
-            touching = driver.IsTouching;
-            spd = driver.TangentialSpeed;
-            if (driver.IsTouching && driver.CurrentSurface != null)
-                surfaceType = driver.CurrentSurface.surfaceType;
+            var channel = _telemetryChannelOverride;
+            if (!channel && HapticsGlobalData.Instance != null)
+                channel = HapticsGlobalData.Instance.GetHandTelemetryChannel(handTelemetrySide);
+
+            if (channel)
+                snapshot = channel.Latest;
+            else if (textureHandDriver)
+                snapshot = HandTelemetrySnapshot.FromHandTextureDriver(textureHandDriver);
             else
-                surfaceType = SurfaceType.Neutral;
+                return;
         }
 
-        _touchPrev    = _touchNow;
-        _touchNow     = touching;
-        _surfaceType  = surfaceType;
-        _spd          = spd;
-        _thermalHotActive  = touching && surfaceType == SurfaceType.Hot;
-        _thermalColdActive = touching && surfaceType == SurfaceType.Cold;
+        bool isTouching = snapshot.IsTouching;
+        float tangentialSpeed = snapshot.TangentialSpeed;
+        SurfaceType surfaceType = snapshot.SurfaceType;
+
+        _touchingPreviousFrame = _touchingNow;
+        _touchingNow = isTouching;
+        _surfaceTypeCached = surfaceType;
+        _tangentialSpeedCached = tangentialSpeed;
+        _thermalHotActive = isTouching && surfaceType == SurfaceType.Hot;
+        _thermalColdActive = isTouching && surfaceType == SurfaceType.Cold;
     }
 
-    void OnAudioFilterRead(float[] data, int channels)
+    void OnAudioFilterRead(float[] data, int channelCount)
     {
-        var t = _settings;
-        int n  = data.Length / channels;
-        float dt = 1f / Mathf.Max(1, _sr);
+        var thermalAudio = _thermalAudioSettings;
+        int sampleCount = data.Length / channelCount;
+        float dt = 1f / Mathf.Max(1, _outputSampleRate);
 
-        for (int i = 0; i < n; i++)
+        for (int i = 0; i < sampleCount; i++)
         {
-            _time     += dt;
-            _ctlTimer += dt;
+            _dspTimeSeconds += dt;
+            _controlTimer += dt;
 
-            if (_ctlTimer >= (1f / Mathf.Max(10f, t.controlRateHz)))
+            if (_controlTimer >= 1f / Mathf.Max(10f, thermalAudio.controlRateHz))
             {
-                _ctlTimer = 0f;
-                RecomputeFilterCoeffs(t);
+                _controlTimer = 0f;
+                RecomputeThermalFilterCoefficients(in thermalAudio);
             }
 
             bool activeThermal = _thermalHotActive || _thermalColdActive;
 
-            // Thermal contact envelope (amplitude gate)
-            float tauGlobal   = activeThermal ? t.attackSec : t.releaseSec;
-            float aEnvGlobal  = 1f - Mathf.Exp(-dt / Mathf.Max(0.0001f, tauGlobal));
-            _onEnv = Mathf.Lerp(_onEnv, activeThermal ? 1f : 0f, aEnvGlobal);
+            float contactTau = activeThermal ? thermalAudio.attackSec : thermalAudio.releaseSec;
+            float contactBlend = 1f - Mathf.Exp(-dt / Mathf.Max(0.0001f, contactTau));
+            _contactEnvelopeSmoothed = Mathf.Lerp(_contactEnvelopeSmoothed, activeThermal ? 1f : 0f, contactBlend);
 
-            // Per-thermal envelopes
             float targetHot = _thermalHotActive ? 1f : 0f;
-            float tauHot    = (targetHot > _thermalEnvHot) ? t.attackSec : t.releaseSec;
-            float aHot      = 1f - Mathf.Exp(-dt / Mathf.Max(0.0001f, tauHot));
-            _thermalEnvHot  = Mathf.Lerp(_thermalEnvHot, targetHot, aHot);
+            float tauHot = targetHot > _thermalEnvelopeHot ? thermalAudio.attackSec : thermalAudio.releaseSec;
+            float blendHot = 1f - Mathf.Exp(-dt / Mathf.Max(0.0001f, tauHot));
+            _thermalEnvelopeHot = Mathf.Lerp(_thermalEnvelopeHot, targetHot, blendHot);
 
             float targetCold = _thermalColdActive ? 1f : 0f;
-            float tauCold    = (targetCold > _thermalEnvCold) ? t.attackSec : t.releaseSec;
-            float aCold      = 1f - Mathf.Exp(-dt / Mathf.Max(0.0001f, tauCold));
-            _thermalEnvCold  = Mathf.Lerp(_thermalEnvCold, targetCold, aCold);
+            float tauCold = targetCold > _thermalEnvelopeCold ? thermalAudio.attackSec : thermalAudio.releaseSec;
+            float blendCold = 1f - Mathf.Exp(-dt / Mathf.Max(0.0001f, tauCold));
+            _thermalEnvelopeCold = Mathf.Lerp(_thermalEnvelopeCold, targetCold, blendCold);
 
-            // Crack event timing: trigger on cold contact edge
             bool coldNow = _thermalColdActive;
-            if (coldNow && !_coldWasActive)
-            {
-                float u0 = Rand01();
-                _crackTimer = Mathf.Lerp(0.5f, 1.2f, u0);
-            }
+            if (coldNow && !_coldThermalWasActive)
+                _nextCrackIntervalSeconds = Mathf.Lerp(0.5f, 1.2f, Random01());
             if (!coldNow)
-                _crackTimer = 999f;
-            _coldWasActive = coldNow;
+                _nextCrackIntervalSeconds = 999f;
+            _coldThermalWasActive = coldNow;
 
-            float sample = 0f;
+            float outputSample = 0f;
 
-            if (_onEnv > 1e-3f)
+            if (_contactEnvelopeSmoothed > 1e-3f)
             {
-                float noise = White();
+                float noise = WhiteNoise();
 
-                // Hot: bright sizzling high-frequency hiss
-                _hotLp += _hotA * (noise - _hotLp);
-                float hotHp     = noise - _hotLp;
-                float hotSample = hotHp * _thermalEnvHot;
+                _hotNoiseLowpass += _hotNoiseLowpassAlpha * (noise - _hotNoiseLowpass);
+                float hotHighpass = noise - _hotNoiseLowpass;
+                float hotSample = hotHighpass * _thermalEnvelopeHot;
 
-                // Cold: glacier rumble + ice cracks
-                _coldLpLow  += _coldALow  * (noise - _coldLpLow);
-                _coldLpHigh += _coldAHigh * (noise - _coldLpHigh);
-                float coldLow = _coldLpLow;
-                float coldHi  = noise - _coldLpHigh;
-                float coldContact = _thermalEnvCold;
+                _coldNoiseLowpassLow += _coldLowpassAlphaLow * (noise - _coldNoiseLowpassLow);
+                _coldNoiseLowpassHigh += _coldLowpassAlphaHigh * (noise - _coldNoiseLowpassHigh);
+                float coldLow = _coldNoiseLowpassLow;
+                float coldHigh = noise - _coldNoiseLowpassHigh;
+                float coldContactEnvelope = _thermalEnvelopeCold;
 
-                // Crack event generation
-                if (coldNow && coldContact > 1e-3f)
+                if (coldNow && coldContactEnvelope > 1e-3f)
                 {
-                    _crackTimer -= dt;
-                    if (_crackTimer <= 0f)
+                    _nextCrackIntervalSeconds -= dt;
+                    if (_nextCrackIntervalSeconds <= 0f)
                     {
-                        int subCount = 2 + (int)(Rand01() * 3f);  // 2–4 sub-cracks
-                        if (subCount > MaxSubCracks) subCount = MaxSubCracks;
+                        int subCount = 2 + (int)(Random01() * 3f);
+                        if (subCount > MaxSubCracks)
+                            subCount = MaxSubCracks;
 
                         for (int scIdx = 0; scIdx < MaxSubCracks; scIdx++)
-                            _subCracks[scIdx].on = false;
+                            _subCrackEvents[scIdx].IsActive = false;
 
-                        float baseSpacing = Mathf.Lerp(0.008f, 0.025f, Rand01());
+                        float baseSpacing = Mathf.Lerp(0.008f, 0.025f, Random01());
 
                         for (int j = 0; j < subCount; j++)
                         {
-                            float rank   = (subCount <= 1) ? 0f : (j / (float)(subCount - 1));
-                            float ampBase= Mathf.Lerp(1.2f, 0.55f, rank);
-                            float ampJit = Mathf.Lerp(0.85f, 1.5f, Rand01());
-                            float amp    = ampBase * ampJit * Mathf.Lerp(0.70f, 1.2f, coldContact);
+                            float rank = subCount <= 1 ? 0f : j / (float)(subCount - 1);
+                            float ampBase = Mathf.Lerp(1.0f, 0.45f, rank);
+                            float ampJit = Mathf.Lerp(0.85f, 1.3f, Random01());
+                            float amp = ampBase * ampJit * Mathf.Lerp(0.70f, 1.2f, coldContactEnvelope);
 
-                            float tauMin = (j == 0) ? 0.002f : 0.006f;
-                            float tauMax = (j == 0) ? 0.010f : 0.028f;
-                            float tau    = Mathf.Lerp(tauMin, tauMax, Rand01());
+                            float tauMin = j == 0 ? 0.002f : 0.006f;
+                            float tauMax = j == 0 ? 0.010f : 0.028f;
+                            float tau = Mathf.Lerp(tauMin, tauMax, Random01());
 
-                            float delayJitter = Mathf.Lerp(0.7f, 1.3f, Rand01());
-                            float startDelay  = baseSpacing * j * delayJitter;
+                            float delayJitter = Mathf.Lerp(0.7f, 1.3f, Random01());
+                            float startDelay = baseSpacing * j * delayJitter;
+                            float brightness = Mathf.Lerp(0.6f, 1.0f, Random01());
 
-                            float color = Mathf.Lerp(0.6f, 1.0f, Rand01());
-
-                            _subCracks[j] = new SubCrack {
-                                on         = true,
-                                t          = 0f,
-                                startDelay = startDelay,
-                                tau        = tau,
-                                amp        = amp,
-                                color      = color
+                            _subCrackEvents[j] = new SubCrackEvent
+                            {
+                                IsActive = true,
+                                TimeSeconds = 0f,
+                                StartDelaySeconds = startDelay,
+                                DecayTau = tau,
+                                Amplitude = amp,
+                                Brightness01 = brightness
                             };
                         }
 
-                        float u = Rand01();
-                        float minInt = Mathf.Lerp(0.8f, 0.5f, coldContact);
-                        float maxInt = Mathf.Lerp(1.5f, 0.9f, coldContact);
-                        _crackTimer = Mathf.Lerp(minInt, maxInt, u);
+                        float u = Random01();
+                        float minInt = Mathf.Lerp(0.8f, 0.5f, coldContactEnvelope);
+                        float maxInt = Mathf.Lerp(1.5f, 0.9f, coldContactEnvelope);
+                        _nextCrackIntervalSeconds = Mathf.Lerp(minInt, maxInt, u);
                     }
                 }
 
-                // Very slow LFO for subtle temperature modulation
-                float lfoFreq = Mathf.Clamp(t.coldLfoHz, 0.10f, 0.80f);
-                _coldLfoPhase += 2f * Mathf.PI * lfoFreq * dt;
-                if (_coldLfoPhase > 2f * Mathf.PI) _coldLfoPhase -= 2f * Mathf.PI;
-                float coldLfo = 0.92f + 0.08f * Mathf.Sin(_coldLfoPhase);
+                float lfoFreq = Mathf.Clamp(thermalAudio.coldLfoHz, 0.10f, 0.80f);
+                _coldSlowLfoPhase += 2f * Mathf.PI * lfoFreq * dt;
+                if (_coldSlowLfoPhase > 2f * Mathf.PI)
+                    _coldSlowLfoPhase -= 2f * Mathf.PI;
+                float coldLfo = 0.92f + 0.08f * Mathf.Sin(_coldSlowLfoPhase);
 
-                float coldBase = (coldLow * 0.9f + coldHi * 0.1f) * coldLfo;
+                float coldBase = (coldLow * 0.9f + coldHigh * 0.1f) * coldLfo;
 
                 float crackMix = 0f;
-                if (coldContact > 1e-3f)
+                if (coldContactEnvelope > 1e-3f)
                 {
-                    float nCrack = White();
-                    _crackHp += _crackHpA * (nCrack - _crackHp);
-                    float crackNoiseBase = nCrack - _crackHp;
-                    float crackNoise     = crackNoiseBase * 0.8f + coldHi * 0.2f;
+                    float nCrack = WhiteNoise();
+                    _crackHighpass += _crackHighpassAlpha * (nCrack - _crackHighpass);
+                    float crackNoiseBase = nCrack - _crackHighpass;
+                    float crackNoise = crackNoiseBase * 0.8f + coldHigh * 0.2f;
 
                     for (int c = 0; c < MaxSubCracks; c++)
                     {
-                        if (!_subCracks[c].on) continue;
-                        var sc = _subCracks[c];
-                        sc.t += dt;
+                        if (!_subCrackEvents[c].IsActive)
+                            continue;
+                        var sc = _subCrackEvents[c];
+                        sc.TimeSeconds += dt;
 
-                        if (sc.t < sc.startDelay)
+                        if (sc.TimeSeconds < sc.StartDelaySeconds)
                         {
-                            _subCracks[c] = sc;
+                            _subCrackEvents[c] = sc;
                             continue;
                         }
 
-                        float localT = sc.t - sc.startDelay;
-                        float env = Mathf.Exp(-localT / Mathf.Max(0.001f, sc.tau));
+                        float localT = sc.TimeSeconds - sc.StartDelaySeconds;
+                        float env = Mathf.Exp(-localT / Mathf.Max(0.001f, sc.DecayTau));
                         if (env < 1e-3f)
                         {
-                            sc.on = false;
-                            _subCracks[c] = sc;
+                            sc.IsActive = false;
+                            _subCrackEvents[c] = sc;
                             continue;
                         }
 
-                        float color = sc.color;
-                        float bright = Mathf.Lerp(0.7f, 1.0f, color);
-                        float dark   = 1.0f - 0.5f * color;
+                        float bright = Mathf.Lerp(0.7f, 1.0f, sc.Brightness01);
+                        float dark = 1.0f - 0.5f * sc.Brightness01;
                         float shaped = crackNoise * bright + coldLow * dark * 0.2f;
-                        crackMix += shaped * env * sc.amp;
-                        _subCracks[c] = sc;
+                        crackMix += shaped * env * sc.Amplitude;
+                        _subCrackEvents[c] = sc;
                     }
                 }
 
-                float coldSample = (coldBase * 0.70f + crackMix * 0.85f) * coldContact * 0.80f;
+                float coldSample = (coldBase * 0.72f + crackMix * 0.55f * CrackleStaticDamping) * coldContactEnvelope * 0.82f;
 
-                float spd01   = Mathf.Clamp01(_spd / Mathf.Max(0.001f, t.speedRef));
-                float spdGain = Mathf.Lerp(t.minSpeedGain, t.maxSpeedGain, spd01);
-                sample = (hotSample + coldSample) * t.masterGain * _onEnv * spdGain;
+                float speed01 = Mathf.Clamp01(_tangentialSpeedCached / Mathf.Max(0.001f, thermalAudio.speedRef));
+                float speedGainConfigured = Mathf.Lerp(thermalAudio.minSpeedGain, thermalAudio.maxSpeedGain, speed01);
+                float speedGainShaped = Mathf.Lerp(
+                    SpeedLoudnessFloor,
+                    1f,
+                    Mathf.Pow(speed01, SpeedLoudnessExponent)
+                );
+                float contactGainShaped = Mathf.Lerp(ContactLoudnessFloor, 1f, _contactEnvelopeSmoothed);
+                float surfaceComp = _thermalHotActive ? HotSurfaceGain : (_thermalColdActive ? ColdSurfaceGain : 1f);
+                outputSample =
+                    (hotSample + coldSample) *
+                    thermalAudio.masterGain *
+                    speedGainConfigured *
+                    speedGainShaped *
+                    contactGainShaped *
+                    surfaceComp *
+                    ThermalOutputSafetyGain;
             }
 
-            for (int ch = 0; ch < channels; ch++)
-                data[i * channels + ch] += sample;
+            for (int ch = 0; ch < channelCount; ch++)
+                data[i * channelCount + ch] += outputSample;
         }
     }
 }

@@ -1,117 +1,104 @@
 using UnityEngine;
+using UnityEngine.Serialization;
 using System.Collections.Generic;
 
 [DefaultExecutionOrder(11000)]
 public class HandTextureDriver : MonoBehaviour
 {
+    const float Epsilon = 1e-5f;
+    const float EffectBlendThreshold = 1e-3f;
+    const float SmoothGlidePredictSeconds = 0.042f;
+    const float SmoothGlideMaxFactor = 0.48f;
+    const float SmoothFollowHz = 14f;
+    const float SmoothEffectFollowHz = 12f;
+
+    [Header("References")]
     public HapticsGlobalData globals;
 
-    // Current global visual settings snapshot
-    HapticsGlobalData.VisualSettings _settings;
-    HapticsGlobalData.VisualSettings V => _settings;
-
-    [Header("XR Hand (actual tracked)")]
+    [Header("Tracked XR hand")]
     public SkinnedMeshRenderer xrRenderer;
     public Transform xrArmatureRoot;
 
-    [Header("Decoy Hand (visibly rendered)")]
+    [Header("Visible decoy hand")]
     public SkinnedMeshRenderer decoyRenderer;
     public Transform decoyArmatureRoot;
 
-    [Header("Decoy hand colliders")]
+    [Header("Decoy collision")]
     public bool autoFindDecoyColliders = true;
     public Collider[] decoyJointColliders;
-
-    [Header("Joint contact settings")]
+    [Tooltip("Physics probe radius at each decoy joint.")]
     public float jointProbeRadius = 0.01f;
-
-    [Tooltip("Max squared distance for valid joint contact")]
+    [Tooltip("Max distance (m) from joint to counted contact.")]
     public float maxJointContactDistance = 0.025f;
 
-    [Header("Debug Indicator")]
-    public GameObject indicator;
-
-    [Header("Contact query (effects)")]
+    [Header("World contact query")]
     public LayerMask contactLayers = ~0;
-    public float contactProbeRadius = 0.06f; // Fallback sphere radius
+    public float contactProbeRadius = 0.06f;
 
+    [Header("Contact performance")]
+    [Tooltip("Broadphase check near palm before per-joint probes.")]
+    public bool useBroadphase = true;
+    [Tooltip("Broadphase radius (m) around the hand root).")]
+    public float broadphaseRadius = 0.12f;
+    [Tooltip("How many decoy joints to probe per frame (round-robin). 0 = all joints.")]
+    public int jointsPerFrame = 6;
+    [Tooltip("Hz for detailed contact point/surface updates. 0 = every frame.")]
+    public float contactDetailHz = 30f;
+
+    [Header("Telemetry")]
+    [Tooltip("Which hand: channel comes from HapticsGlobalData (left/right assets on Global Manager).")]
+    public HandTelemetrySide handTelemetrySide = HandTelemetrySide.Left;
+    [SerializeField, FormerlySerializedAs("telemetryChannel"), Tooltip("Optional per-hand override. Leave empty to use HapticsGlobalData.")]
+    HandTelemetryChannel _telemetryChannelOverride;
+
+    [Header("Motion pseudo-haptics")]
     public bool useMotionEffects = true;
+    public float contactReleaseTime = 1.0f;
 
-    public float contactReleaseTime = 1.0f;   // Smooth release after leaving touch
+    [Header("Debug")]
+    public GameObject indicator;
+    public bool drawGizmos;
 
-    public bool drawGizmos = false;
+    // --- Outputs (read by audio / thermal / trials) -------------------------------------------
 
-    // Telemetry properties
-    public float   CurrentRoughness01 { get; private set; }
-    public bool    IsTouching         { get; private set; } // Smoothed envelope
-    public bool    IsTouchingRaw      { get; private set; } // Instant raw contact
-    public bool    IsSliding          { get; private set; }
-    public float   TangentialSpeed    { get; private set; }
+    public float CurrentRoughness01 { get; private set; }
+    public bool IsTouching { get; private set; }
+    public bool IsTouchingRaw { get; private set; }
+    public bool IsSliding { get; private set; }
+    public float TangentialSpeed { get; private set; }
     public Vector3 TangentialVelocity { get; private set; }
-    public Vector3 ContactNormal      { get; private set; } = Vector3.up;
-
+    public Vector3 ContactNormal { get; private set; } = Vector3.up;
     public SurfaceData CurrentSurface { get; private set; }
-
-    // World-space contact point (or last touch point)
     public Vector3 ContactPoint { get; private set; }
-
-    // Contact coverage: fraction of joints in contact
     public float ContactCoverage01 { get; private set; }
+    public float ContactEnvelope01 { get; private set; }
+    public Vector3 BasePos { get; private set; }
+    public Quaternion BaseRot { get; private set; }
+    public Vector3 EffectOffset { get; private set; }
 
-    public Vector3    BasePos      { get; private set; }
-    public Quaternion BaseRot      { get; private set; }
-    public Vector3    EffectOffset { get; private set; }
+    // --- Runtime --------------------------------------------------------------------------------
 
-    // Internal state
-    readonly Dictionary<string, Transform> srcByName = new Dictionary<string, Transform>();
-    readonly List<(Transform src, Transform dst)> bonePairs = new List<(Transform src, Transform dst)>();
-    readonly Collider[] hits = new Collider[32];
+    HapticsGlobalData.VisualSettings _visualSettings;
 
-    struct PoseSample { public Vector3 pos; public Quaternion rot; public float time; }
-    const int PoseCap = 128;
-    readonly PoseSample[] poseBuf = new PoseSample[PoseCap];
-    int poseCount;
+    readonly Dictionary<string, Transform> _xrBoneTransformByName = new Dictionary<string, Transform>();
+    readonly List<(Transform src, Transform dst)> _xrToDecoyBonePairs = new List<(Transform src, Transform dst)>();
 
-    Vector3 lastSrcPos;
-    Vector3 velLP;
-    bool    sliding;
+    readonly HandPoseHistory _poseHistory = new HandPoseHistory();
+    readonly HandContactSensor _contactSensor = new HandContactSensor();
 
-    // Glide effect state
-    Vector3 glideVel;
-    Vector3 glideOffset;
-
-    // Frame coordinate system
-    Vector3 nrm = Vector3.up, t1 = Vector3.right, t2 = Vector3.forward;
-
-    // Roughness state (0=smooth, 1=rough, 0.5=neutral)
-    float currentRoughness;
-
-    // Tremor oscillation state
-    float tremorPhase;
-    float tremorHz;
-
-    // Smoothed contact and effect envelopes
-    float contactEnv;              // Smooth contact envelope (0..1)
-    Vector3 contactPointSmooth;    // Smoothed contact point
-
-    // Smoothed base pose
-    Vector3    basePosSmooth;
-    Quaternion baseRotSmooth;
-
-    // Smoothed effect offset
-    Vector3 effectOffsetSmooth;
-
-    // Legacy physics fields (no longer used for motion)
-    Vector3    desiredPos;
-    Quaternion desiredRot;
-    bool       hasDesiredPose;
-
-    // Current surface type (debug and telemetry)
-    SurfaceType _surfaceType = SurfaceType.Neutral;
+    Vector3 _glideOffsetWorld;
+    Vector3 _tangentAxisPrimary;
+    Vector3 _tangentAxisSecondary;
+    float _tremorPhase;
+    float _tremorFrequencyHz;
+    Vector3 _smoothBasePosition;
+    Quaternion _smoothBaseRotation;
+    Vector3 _smoothEffectOffsetWorld;
 
     void Awake()
     {
-        if (!globals) globals = HapticsGlobalData.Instance;
+        if (!globals)
+            globals = HapticsGlobalData.Instance;
         if (!globals)
         {
             Debug.LogError("[HandTextureDriver] No HapticsGlobalData found in scene.");
@@ -119,7 +106,7 @@ public class HandTextureDriver : MonoBehaviour
             return;
         }
 
-        _settings = globals.visual;
+        _visualSettings = globals.visual;
 
         if (!xrRenderer || !decoyRenderer)
         {
@@ -138,535 +125,308 @@ public class HandTextureDriver : MonoBehaviour
 
         BuildBonePairs();
 
-        lastSrcPos = xrArmatureRoot.position;
-        velLP      = Vector3.zero;
-        poseCount  = 0;
+        _poseHistory.Initialize(xrArmatureRoot);
+        _contactSensor.Initialize(xrArmatureRoot.position);
 
-        // Hide XR hand mesh, show only decoy
-        foreach (var r in xrRenderer.GetComponentsInChildren<Renderer>(true))
-            r.enabled = false;
+        foreach (var renderer in xrRenderer.GetComponentsInChildren<Renderer>(true))
+            renderer.enabled = false;
 
-        // Initialize decoy root pose to match XR pose
         decoyArmatureRoot.SetPositionAndRotation(xrArmatureRoot.position, xrArmatureRoot.rotation);
 
         SetIndicator(false);
 
-        var cfg = V;
-        currentRoughness = Mathf.Clamp01(cfg.defaultRoughness);
-        glideVel         = Vector3.zero;
-        glideOffset      = Vector3.zero;
+        var visualSettings = _visualSettings;
+        CurrentRoughness01 = Mathf.Clamp01(visualSettings.defaultRoughness);
+        ContactPoint = xrArmatureRoot.position;
+        ContactNormal = Vector3.up;
+        _glideOffsetWorld = Vector3.zero;
 
-        tremorPhase = Random.value * Mathf.PI * 2f;
-        tremorHz    = Random.Range(cfg.tremorHzRange.x, cfg.tremorHzRange.y);
+        _tremorPhase = Random.value * Mathf.PI * 2f;
+        _tremorFrequencyHz = Random.Range(visualSettings.tremorHzRange.x, visualSettings.tremorHzRange.y);
 
-        // Initialize smoothed pose and effect state
-        basePosSmooth      = xrArmatureRoot.position;
-        baseRotSmooth      = xrArmatureRoot.rotation;
-        effectOffsetSmooth = Vector3.zero;
-        contactEnv         = 0f;
-        contactPointSmooth = xrArmatureRoot.position;
+        _smoothBasePosition = xrArmatureRoot.position;
+        _smoothBaseRotation = xrArmatureRoot.rotation;
+        _smoothEffectOffsetWorld = Vector3.zero;
     }
 
     void OnEnable()
     {
-        if (!globals) globals = HapticsGlobalData.Instance;
+        if (!globals)
+            globals = HapticsGlobalData.Instance;
         if (globals != null)
-        {
-            globals.OnGlobalsChanged += HandleGlobalsChanged;
-        }
+            globals.OnGlobalsChanged += OnHapticsGlobalsChanged;
     }
 
     void OnDisable()
     {
         if (globals != null)
-        {
-            globals.OnGlobalsChanged -= HandleGlobalsChanged;
-        }
+            globals.OnGlobalsChanged -= OnHapticsGlobalsChanged;
     }
 
-    void HandleGlobalsChanged()
+    void OnHapticsGlobalsChanged()
     {
-        if (globals == null) return;
-        _settings = globals.visual;
+        if (globals == null)
+            return;
+        _visualSettings = globals.visual;
     }
 
     void BuildBonePairs()
     {
-        srcByName.Clear();
-        foreach (var b in xrRenderer.bones)
-            if (b && !srcByName.ContainsKey(b.name))
-                srcByName.Add(b.name, b);
+        _xrBoneTransformByName.Clear();
+        foreach (var bone in xrRenderer.bones)
+            if (bone && !_xrBoneTransformByName.ContainsKey(bone.name))
+                _xrBoneTransformByName.Add(bone.name, bone);
 
-        bonePairs.Clear();
-        foreach (var d in decoyRenderer.bones)
+        _xrToDecoyBonePairs.Clear();
+        foreach (var decoyBone in decoyRenderer.bones)
         {
-            if (!d) continue;
-            if (d == decoyArmatureRoot) continue; // root driven separately
+            if (!decoyBone)
+                continue;
+            if (decoyBone == decoyArmatureRoot)
+                continue;
 
-            string key = d.name.EndsWith("_Ghost")
-                ? d.name.Substring(0, d.name.Length - 6)
-                : d.name;
+            string key = decoyBone.name.EndsWith("_Ghost")
+                ? decoyBone.name.Substring(0, decoyBone.name.Length - 6)
+                : decoyBone.name;
 
-            if (srcByName.TryGetValue(key, out var s))
-                bonePairs.Add((s, d));
+            if (_xrBoneTransformByName.TryGetValue(key, out var xrBone))
+                _xrToDecoyBonePairs.Add((xrBone, decoyBone));
         }
 
-        if (bonePairs.Count == 0)
+        if (_xrToDecoyBonePairs.Count == 0)
             Debug.LogWarning("[HandTextureDriver] No bone name matches (children).");
     }
 
     void LateUpdate()
     {
-        var cfg = V;
+        var visualSettings = _visualSettings;
+        float deltaTime = Mathf.Max(Time.deltaTime, Epsilon);
+        float timeNow = Time.time;
 
-        float dt  = Mathf.Max(Time.deltaTime, 1e-5f);
-        float now = Time.time;
-
-        // Mirror bones from source to decoy (local transforms)
-        for (int i = 0; i < bonePairs.Count; i++)
+        for (int i = 0; i < _xrToDecoyBonePairs.Count; i++)
         {
-            var pair = bonePairs[i];
-            if (!pair.src || !pair.dst) continue;
+            var pair = _xrToDecoyBonePairs[i];
+            if (!pair.src || !pair.dst)
+                continue;
             pair.dst.localPosition = pair.src.localPosition;
             pair.dst.localRotation = pair.src.localRotation;
-            pair.dst.localScale    = pair.src.localScale;
+            pair.dst.localScale = pair.src.localScale;
         }
 
-        // Track source motion and history
-        Vector3 srcPos  = xrArmatureRoot.position;
-        Vector3 instVel = (srcPos - lastSrcPos) / dt;
-        lastSrcPos = srcPos;
+        _poseHistory.Tick(xrArmatureRoot, visualSettings.velocityLowpassHz, deltaTime, timeNow);
+        Vector3 trackedRootPosition = _poseHistory.Position;
 
-        if (cfg.velocityLowpassHz > 0f)
+        HandContactState contactState = _contactSensor.Sample(
+            xrArmatureRoot,
+            decoyArmatureRoot,
+            decoyJointColliders,
+            contactLayers,
+            jointProbeRadius,
+            maxJointContactDistance,
+            contactProbeRadius,
+            contactReleaseTime,
+            useBroadphase,
+            broadphaseRadius,
+            jointsPerFrame <= 0 ? int.MaxValue : jointsPerFrame,
+            contactDetailHz,
+            trackedRootPosition,
+            _poseHistory.Velocity,
+            visualSettings,
+            deltaTime
+        );
+
+        IsTouchingRaw = contactState.TouchingRaw;
+        IsTouching = contactState.Touching;
+        IsSliding = contactState.Sliding;
+        TangentialVelocity = contactState.TangentialVelocity;
+        TangentialSpeed = contactState.TangentialSpeed;
+        ContactNormal = contactState.ContactNormal;
+        ContactPoint = contactState.ContactPoint;
+        ContactCoverage01 = contactState.ContactCoverage01;
+        ContactEnvelope01 = contactState.ContactEnvelope;
+        CurrentSurface = contactState.Surface;
+        CurrentRoughness01 = contactState.Roughness01;
+
+        bool isTouching = contactState.Touching;
+        Vector3 planeNormal = contactState.ContactNormal;
+        Vector3 tangentialVelocity = contactState.TangentialVelocity;
+        float tangentialSpeed = contactState.TangentialSpeed;
+        SurfaceType surfaceType = contactState.SurfaceType;
+
+        bool isTextureSurface = surfaceType == SurfaceType.Smooth || surfaceType == SurfaceType.Rough;
+
+        float effectEnvelope = 0f;
+        float smoothIceBlend = 0f;
+        float roughBlend = 0f;
+
+        if (isTextureSurface)
         {
-            float a = 1f - Mathf.Exp(-2f * Mathf.PI * cfg.velocityLowpassHz * dt);
-            velLP = Vector3.Lerp(velLP, instVel, a);
-        }
-        else
-        {
-            velLP = instVel;
-        }
-
-        PushPose(new PoseSample { pos = srcPos, rot = xrArmatureRoot.rotation, time = now });
-
-        // Sample contact from decoy joint colliders
-        bool     touchingRaw        = false;
-        Collider bestSurfaceCollider = null;
-        Vector3  bestSurfaceCp       = srcPos;
-        float    bestSurfaceD2       = float.PositiveInfinity;
-
-        Vector3 cpAccum     = Vector3.zero;
-        float   weightAccum = 0f;
-        int     contactCount = 0;
-
-        float maxD2 = Mathf.Max(1e-6f, maxJointContactDistance * maxJointContactDistance);
-
-        Collider[] jointCols = decoyJointColliders;
-        if (jointCols != null && jointCols.Length > 0)
-        {
-            for (int j = 0; j < jointCols.Length; j++)
-            {
-                var hc = jointCols[j];
-                if (!hc || !hc.enabled) continue;
-
-                Vector3 jointCenter = hc.bounds.center;
-
-                int n = Physics.OverlapSphereNonAlloc(
-                    jointCenter,
-                    jointProbeRadius,
-                    hits,
-                    contactLayers,
-                    QueryTriggerInteraction.Ignore
-                );
-
-                for (int i = 0; i < n; i++)
-                {
-                    var c = hits[i];
-                    if (!c) continue;
-                    if (c.transform.IsChildOf(xrArmatureRoot)) continue;
-                    if (decoyArmatureRoot && c.transform.IsChildOf(decoyArmatureRoot)) continue;
-
-                    Vector3 cp = c.ClosestPoint(jointCenter);
-                    float d2 = (cp - jointCenter).sqrMagnitude;
-                    if (d2 > maxD2) continue;
-
-                    touchingRaw = true;
-                    contactCount++;
-
-                    float w = 1f / (0.0005f + d2);
-                    cpAccum     += cp * w;
-                    weightAccum += w;
-
-                    if (d2 < bestSurfaceD2)
-                    {
-                        bestSurfaceD2      = d2;
-                        bestSurfaceCollider = c;
-                        bestSurfaceCp       = cp;
-                    }
-                }
-            }
-        }
-        else
-        {
-            // Fallback: single sphere near XR root
-            int n = Physics.OverlapSphereNonAlloc(
-                srcPos, contactProbeRadius, hits, contactLayers,
-                QueryTriggerInteraction.Ignore
-            );
-            for (int i = 0; i < n; i++)
-            {
-                var c = hits[i];
-                if (!c) continue;
-                if (c.transform.IsChildOf(xrArmatureRoot)) continue;
-                if (decoyArmatureRoot && c.transform.IsChildOf(decoyArmatureRoot)) continue;
-
-                Vector3 cp = c.ClosestPoint(srcPos);
-                float d2 = (cp - srcPos).sqrMagnitude;
-                if (d2 > maxD2) continue;
-
-                touchingRaw = true;
-                contactCount++;
-
-                float w = 1f / (0.0005f + d2);
-                cpAccum     += cp * w;
-                weightAccum += w;
-
-                if (d2 < bestSurfaceD2)
-                {
-                    bestSurfaceD2      = d2;
-                    bestSurfaceCollider = c;
-                    bestSurfaceCp       = cp;
-                }
-            }
-        }
-
-        if (touchingRaw && weightAccum > 0f)
-        {
-            Vector3 cp = cpAccum / weightAccum;
-
-            // Smooth contact point (avoid jittery highlight)
-            float cpHz = 20f;
-            float cpA  = 1f - Mathf.Exp(-2f * Mathf.PI * cpHz * dt);
-            contactPointSmooth = Vector3.Lerp(contactPointSmooth, cp, cpA);
-            ContactPoint       = contactPointSmooth;
-
-            int denom = Mathf.Max(1, jointCols != null ? jointCols.Length : 1);
-            ContactCoverage01 = Mathf.Clamp01((float)contactCount / denom);
-        }
-        else
-        {
-            ContactCoverage01 = 0f;
-        }
-
-        if (touchingRaw && bestSurfaceCollider != null)
-        {
-            Vector3 approx = (srcPos - bestSurfaceCp);
-            nrm = approx.sqrMagnitude > 1e-10f ? approx.normalized : bestSurfaceCollider.transform.up;
-        }
-
-        IsTouchingRaw = touchingRaw;
-        UpdateContactEnvelope(touchingRaw, dt);
-        bool touching = IsTouching;
-
-        // 4) tangential velocity
-        Vector3 vTan = Tangential(velLP, nrm);
-        float   speed = vTan.magnitude;
-
-        if (!sliding && speed >= cfg.slideSpeedThresholdEnter) sliding = true;
-        else if (sliding && speed <= cfg.slideSpeedThresholdExit) sliding = false;
-
-        // 5) surface type  -> discrete tactile behavior
-        CurrentSurface = null;
-        SurfaceType surfaceType = SurfaceType.Neutral;
-
-        if (bestSurfaceCollider)
-        {
-            var surface = bestSurfaceCollider.GetComponentInParent<SurfaceData>();
-            if (surface)
-            {
-                CurrentSurface = surface;
-                surfaceType    = surface.surfaceType;
-            }
-        }
-
-        switch (surfaceType)
-        {
-            case SurfaceType.Smooth:
-                currentRoughness = 0f;
-                break;
-            case SurfaceType.Rough:
-                currentRoughness = 1f;
-                break;
-            default:
-                currentRoughness = 0.5f;
-                break;
-        }
-        CurrentRoughness01 = currentRoughness;
-        _surfaceType       = surfaceType;
-
-        bool isEffectSurface = (surfaceType == SurfaceType.Smooth || surfaceType == SurfaceType.Rough);
-
-        // envelope used to fade pseudo-haptic effects
-        float effectEnv   = 0f;
-        float iceFactor   = 0f;
-        float roughFactor = 0f;
-
-        if (isEffectSurface)
-        {
-            effectEnv = contactEnv;
-            if (effectEnv > 1e-3f)
+            effectEnvelope = contactState.ContactEnvelope;
+            if (effectEnvelope > EffectBlendThreshold)
             {
                 if (surfaceType == SurfaceType.Smooth)
-                    iceFactor = effectEnv;
+                    smoothIceBlend = effectEnvelope;
                 else if (surfaceType == SurfaceType.Rough)
-                    roughFactor = effectEnv;
+                    roughBlend = effectEnvelope;
             }
         }
 
-        // 6) base pose (with extra lag only on effect surfaces)
-        Vector3    basePos = srcPos;
-        Quaternion baseRot = xrArmatureRoot.rotation;
+        Vector3 basePosition = trackedRootPosition;
+        Quaternion baseRotation = xrArmatureRoot.rotation;
 
-        bool roughContactNow  = (effectEnv > 1e-3f && surfaceType == SurfaceType.Rough);
-        bool smoothContactNow = (effectEnv > 1e-3f && surfaceType == SurfaceType.Smooth);
+        bool isRoughContact = effectEnvelope > EffectBlendThreshold && surfaceType == SurfaceType.Rough;
+        bool isSmoothContact = effectEnvelope > EffectBlendThreshold && surfaceType == SurfaceType.Smooth;
 
-        if (roughContactNow && touching)
+        if (isRoughContact && isTouching)
         {
-            float latencyMs = cfg.latencyMsAt1;
+            float latencyMs = visualSettings.latencyMsAt1;
             if (latencyMs > 0f)
             {
-                float tTarget = now - 0.001f * latencyMs;
-                SampleDelayedPose(tTarget, out basePos, out baseRot);
+                float targetTime = timeNow - 0.001f * latencyMs;
+                _poseHistory.SampleDelayedPose(targetTime, out basePosition, out baseRotation);
             }
         }
 
-        if (speed > 1e-6f)
-        {
-            t1 = vTan / Mathf.Max(speed, 1e-6f);
-        }
+        if (tangentialSpeed > Epsilon)
+            _tangentAxisPrimary = tangentialVelocity / Mathf.Max(tangentialSpeed, Epsilon);
         else
         {
-            t1 = Vector3.Cross(nrm, Vector3.up);
-            if (t1.sqrMagnitude < 1e-6f)
-                t1 = Vector3.Cross(nrm, Vector3.right);
-            t1.Normalize();
+            _tangentAxisPrimary = Vector3.Cross(planeNormal, Vector3.up);
+            if (_tangentAxisPrimary.sqrMagnitude < Epsilon)
+                _tangentAxisPrimary = Vector3.Cross(planeNormal, Vector3.right);
+            _tangentAxisPrimary.Normalize();
         }
-        t2 = Vector3.Normalize(Vector3.Cross(nrm, t1));
+        _tangentAxisSecondary = Vector3.Normalize(Vector3.Cross(planeNormal, _tangentAxisPrimary));
 
-        // smooth base pose:
-        // - free space / neutral: track hard (almost no lag)
-        // - Smooth/Rough surfaces: slower follow so offsets show up
         {
-            float freeHz   = 40f;  // snappy when no pseudo-haptics
-            float smoothHz = 12f;
-            float roughHz  = 7f;
+            const float followHzFree = 40f;
+            const float followHzSmooth = SmoothFollowHz;
+            const float followHzRough = 7f;
 
-            float contactHz    = Mathf.Lerp(smoothHz, roughHz, roughFactor);
-            float baseFollowHz = isEffectSurface
-                ? Mathf.Lerp(freeHz, contactHz, Mathf.Clamp01(effectEnv))
-                : freeHz;
+            float contactFollowHz = Mathf.Lerp(followHzSmooth, followHzRough, roughBlend);
+            float baseFollowHz = isTextureSurface
+                ? Mathf.Lerp(followHzFree, contactFollowHz, Mathf.Clamp01(effectEnvelope))
+                : followHzFree;
 
-            float aBase = 1f - Mathf.Exp(-2f * Mathf.PI * baseFollowHz * dt);
-            basePosSmooth = Vector3.Lerp(basePosSmooth, basePos, aBase);
-            baseRotSmooth = Quaternion.Slerp(baseRotSmooth, baseRot, aBase);
+            float baseBlend = 1f - Mathf.Exp(-2f * Mathf.PI * baseFollowHz * deltaTime);
+            _smoothBasePosition = Vector3.Lerp(_smoothBasePosition, basePosition, baseBlend);
+            _smoothBaseRotation = Quaternion.Slerp(_smoothBaseRotation, baseRotation, baseBlend);
         }
 
-        BasePos = basePosSmooth;
-        BaseRot = baseRotSmooth;
+        BasePos = _smoothBasePosition;
+        BaseRot = _smoothBaseRotation;
 
-        // Motion effects (pseudo-haptic glide and tremor on texture surfaces)
-        Vector3 effectTarget = Vector3.zero;
+        Vector3 effectTargetWorld = Vector3.zero;
 
-        if (useMotionEffects && isEffectSurface && effectEnv > 1e-3f)
+        if (useMotionEffects && isTextureSurface && effectEnvelope > EffectBlendThreshold)
         {
-            // Smooth surface: glide effect
-            glideOffset -= Vector3.Dot(glideOffset, nrm) * nrm;
-            glideVel    -= Vector3.Dot(glideVel,    nrm) * nrm;
+            _glideOffsetWorld -= Vector3.Dot(_glideOffsetWorld, planeNormal) * planeNormal;
 
-            if (smoothContactNow)
+            if (isSmoothContact)
             {
-                if (speed > cfg.glideDeadzoneSpeed)
+                if (tangentialSpeed > visualSettings.glideDeadzoneSpeed)
                 {
-                    // Predictive offset for visible glide
-                    float predictTime = 0.12f;
-                    Vector3 targetOffset = vTan * predictTime;
+                    Vector3 targetOffset = tangentialVelocity * SmoothGlidePredictSeconds;
+                    float smoothMaxGlide = visualSettings.glideMaxOffsetAt0 * SmoothGlideMaxFactor;
+                    if (targetOffset.sqrMagnitude > smoothMaxGlide * smoothMaxGlide)
+                        targetOffset = targetOffset.normalized * smoothMaxGlide;
 
-                    float accel = cfg.glideAccel;
-                    float a     = 1f - Mathf.Exp(-accel * dt);
-                    glideOffset = Vector3.Lerp(glideOffset, targetOffset, a);
+                    // Silky glide: slightly slower follow so motion stays stable but still drifts subtly.
+                    float glideBlend = 1f - Mathf.Exp(-(visualSettings.glideAccel * 1.05f + 5f) * deltaTime);
+                    _glideOffsetWorld = Vector3.Lerp(_glideOffsetWorld, targetOffset, glideBlend);
+                }
+                else
+                {
+                    float glideReturnBlend = 1f - Mathf.Exp(-(visualSettings.glideReturnRate * 1.0f) * deltaTime);
+                    _glideOffsetWorld = Vector3.Lerp(_glideOffsetWorld, Vector3.zero, glideReturnBlend);
                 }
             }
             else
             {
-                // Decay glide offset when not on smooth
-                float returnRate = cfg.glideReturnRate;
-                float r          = 1f - Mathf.Exp(-returnRate * dt);
-                glideOffset      = Vector3.Lerp(glideOffset, Vector3.zero, r);
+                float glideReturnBlend = 1f - Mathf.Exp(-visualSettings.glideReturnRate * deltaTime);
+                _glideOffsetWorld = Vector3.Lerp(_glideOffsetWorld, Vector3.zero, glideReturnBlend);
             }
 
-            // Clamp glide globally
-            float maxGlide = cfg.glideMaxOffsetAt0 * 1.5f;
-            if (glideOffset.magnitude > maxGlide)
-                glideOffset = glideOffset.normalized * maxGlide;
+            float maxGlide = visualSettings.glideMaxOffsetAt0 * 1.5f;
+            if (_glideOffsetWorld.magnitude > maxGlide)
+                _glideOffsetWorld = _glideOffsetWorld.normalized * maxGlide;
 
-            // Rough surface: lag and tremor
-            Vector3 roughEffect = Vector3.zero;
-            if (roughContactNow)
+            Vector3 roughOffsetWorld = Vector3.zero;
+            if (isRoughContact)
             {
-                float slideGate = sliding ? 1f : 0.5f;
+                float slideGate = IsSliding ? 1f : 0.5f;
+                float baseLag = visualSettings.maxLagAt1 * 0.4f;
+                float speedLag = tangentialSpeed * visualSettings.lagGainAt1 * 1.5f;
+                float lagAmount = Mathf.Min(visualSettings.maxLagAt1 * 1.8f, baseLag + speedLag);
+                roughOffsetWorld -= _tangentAxisPrimary * lagAmount * slideGate;
 
-                float baseLag   = cfg.maxLagAt1 * 0.4f;
-                float speedLag  = speed * cfg.lagGainAt1 * 1.5f;
-                float lag       = Mathf.Min(cfg.maxLagAt1 * 1.8f, baseLag + speedLag);
-                roughEffect -= t1 * lag * slideGate;
+                float tremorGate = Mathf.Clamp01(effectEnvelope);
+                float speedNormalized = Mathf.Clamp01(
+                    tangentialSpeed / Mathf.Max(0.05f, visualSettings.slideSpeedThresholdEnter + 0.15f));
 
-                float tremGate = Mathf.Clamp01(effectEnv);
-                float spd01    = Mathf.Clamp01(speed / Mathf.Max(0.05f, cfg.slideSpeedThresholdEnter + 0.15f));
+                float tremorHzMin = visualSettings.tremorHzRange.x;
+                float tremorHzMax = visualSettings.tremorHzRange.y;
+                float tremorHzTarget = Mathf.Lerp(tremorHzMin, tremorHzMax, 0.7f);
+                _tremorFrequencyHz = Mathf.Lerp(_tremorFrequencyHz, tremorHzTarget, 1f - Mathf.Exp(-6f * deltaTime));
+                _tremorPhase += 2f * Mathf.PI * _tremorFrequencyHz * deltaTime;
 
-                // Tremor oscillation
-                float tremHzMin    = cfg.tremorHzRange.x;
-                float tremHzMax    = cfg.tremorHzRange.y;
-                float tremHzTarget = Mathf.Lerp(tremHzMin, tremHzMax, 0.7f);
-                tremorHz = Mathf.Lerp(tremorHz, tremHzTarget, 1f - Mathf.Exp(-6f * dt));
-                tremorPhase += 2f * Mathf.PI * tremorHz * dt;
+                float tremorAmplitude = visualSettings.tremorAmpAt1 + visualSettings.tremorAmpPerSpeed * tangentialSpeed;
+                tremorAmplitude = Mathf.Clamp(tremorAmplitude, 0f, visualSettings.tremorAmpMax * 2.0f);
+                float tremorScale = tremorAmplitude * (0.7f + 0.6f * speedNormalized) * tremorGate * slideGate;
 
-                float baseAmp = cfg.tremorAmpAt1 + cfg.tremorAmpPerSpeed * speed;
-                baseAmp = Mathf.Clamp(baseAmp, 0f, cfg.tremorAmpMax * 2.0f);
-
-                float amp = baseAmp * (0.7f + 0.6f * spd01) * tremGate * slideGate;
-
-                float s1 = Mathf.Sin(tremorPhase);
-                float s2 = Mathf.Sin(tremorPhase * 1.37f + 0.25f);
-
-                roughEffect += (t1 * s1 + t2 * 0.4f * s2) * amp;
+                float s1 = Mathf.Sin(_tremorPhase);
+                float s2 = Mathf.Sin(_tremorPhase * 1.37f + 0.25f);
+                roughOffsetWorld += (_tangentAxisPrimary * s1 + _tangentAxisSecondary * 0.4f * s2) * tremorScale;
             }
 
-            Vector3 smoothPart = glideOffset * iceFactor;
-            Vector3 roughPart  = roughEffect;
+            effectTargetWorld = _glideOffsetWorld * smoothIceBlend + roughOffsetWorld;
 
-            effectTarget = smoothPart + roughPart;
-
-            if (effectTarget.sqrMagnitude > cfg.maxEffectOffset * cfg.maxEffectOffset)
-                effectTarget = effectTarget.normalized * cfg.maxEffectOffset;
+            float maxEffect = visualSettings.maxEffectOffset;
+            if (effectTargetWorld.sqrMagnitude > maxEffect * maxEffect)
+                effectTargetWorld = effectTargetWorld.normalized * maxEffect;
         }
         else
         {
-            // No pseudo-haptics on neutral; decay glide
-            float returnRate = cfg.glideReturnRate;
-            float r          = 1f - Mathf.Exp(-returnRate * dt);
-            glideOffset      = Vector3.Lerp(glideOffset, Vector3.zero, r);
+            float glideReturnBlend = 1f - Mathf.Exp(-visualSettings.glideReturnRate * deltaTime);
+            _glideOffsetWorld = Vector3.Lerp(_glideOffsetWorld, Vector3.zero, glideReturnBlend);
         }
 
-        // Final smoothing for controlled offsets
         {
-            float freeHz   = 24f;
-            float smoothHz = 12f;
-            float roughHz  = 7f;
+            const float effectFollowHzFree = 18f;
+            const float effectFollowHzSmooth = SmoothEffectFollowHz;
+            const float effectFollowHzRough = 7f;
 
-            float contactHz = Mathf.Lerp(smoothHz, roughHz, roughFactor);
-            float followHz  = isEffectSurface
-                ? Mathf.Lerp(freeHz, contactHz, Mathf.Clamp01(effectEnv))
-                : freeHz;
+            float effectContactHz = Mathf.Lerp(effectFollowHzSmooth, effectFollowHzRough, roughBlend);
+            float effectFollowHz = isTextureSurface
+                ? Mathf.Lerp(effectFollowHzFree, effectContactHz, Mathf.Clamp01(effectEnvelope))
+                : effectFollowHzFree;
 
-            float aEff = 1f - Mathf.Exp(-2f * Mathf.PI * followHz * dt);
-            effectOffsetSmooth = Vector3.Lerp(effectOffsetSmooth, effectTarget, aEff);
+            float effectBlend = 1f - Mathf.Exp(-2f * Mathf.PI * effectFollowHz * deltaTime);
+            _smoothEffectOffsetWorld = Vector3.Lerp(_smoothEffectOffsetWorld, effectTargetWorld, effectBlend);
         }
 
-        EffectOffset = effectOffsetSmooth;
+        EffectOffset = _smoothEffectOffsetWorld;
 
-        // Final pose for decoy hand (direct transform, no rigidbody)
-        Vector3 finalPos = BasePos + EffectOffset;
-        Quaternion finalRot = BaseRot;
+        Vector3 finalPosition = BasePos + EffectOffset;
+        Quaternion finalRotation = BaseRot;
+        decoyArmatureRoot.SetPositionAndRotation(finalPosition, finalRotation);
 
-        decoyArmatureRoot.SetPositionAndRotation(finalPos, finalRot);
+        SetIndicator(effectEnvelope > 0.01f || IsTouching);
 
-        // Keep desired pose for debugging or future reintroduction
-        desiredPos    = finalPos;
-        desiredRot    = finalRot;
-        hasDesiredPose = true;
-
-        // Telemetry output
-        IsSliding          = sliding;
-        TangentialVelocity = vTan;
-        TangentialSpeed    = speed;
-        ContactNormal      = nrm;
-
-        SetIndicator(contactEnv > 0.01f);
+        var publishChannel = ResolveTelemetryPublishChannel();
+        if (publishChannel)
+            publishChannel.Publish(HandTelemetrySnapshot.FromContact(in contactState));
     }
 
-    // Rigidbody no longer used for motion; kept as placeholder
-    void FixedUpdate()
+    HandTelemetryChannel ResolveTelemetryPublishChannel()
     {
-        // Intentionally empty – decoy driven by transform in LateUpdate
+        if (_telemetryChannelOverride)
+            return _telemetryChannelOverride;
+        var globalData = globals ? globals : HapticsGlobalData.Instance;
+        return globalData ? globalData.GetHandTelemetryChannel(handTelemetrySide) : null;
     }
 
-    void UpdateContactEnvelope(bool touchingRaw, float dt)
-    {
-        // Smooth contact envelope for fade transitions
-        float target = touchingRaw ? 1f : 0f;
-
-        float attackTau  = Mathf.Max(0.01f, contactReleaseTime * 0.15f);
-        float releaseTau = Mathf.Max(0.01f, contactReleaseTime);
-
-        float tau = (target > contactEnv) ? attackTau : releaseTau;
-        float k   = 1f - Mathf.Exp(-dt / tau);
-
-        contactEnv = Mathf.Lerp(contactEnv, target, k);
-        IsTouching = contactEnv > 0.02f;
-    }
-
-    static Vector3 Tangential(Vector3 v, Vector3 n) => v - Vector3.Dot(v, n) * n;
-
-    void PushPose(PoseSample s)
-    {
-        if (poseCount < PoseCap)
-        {
-            poseBuf[poseCount++] = s;
-        }
-        else
-        {
-            for (int i = 1; i < PoseCap; i++)
-                poseBuf[i - 1] = poseBuf[i];
-            poseBuf[PoseCap - 1] = s;
-        }
-    }
-
-    void SampleDelayedPose(float tTarget, out Vector3 pos, out Quaternion rot)
-    {
-        if (poseCount == 0)
-        {
-            pos = xrArmatureRoot.position;
-            rot = xrArmatureRoot.rotation;
-            return;
-        }
-
-        PoseSample newest = poseBuf[poseCount - 1];
-        if (tTarget >= newest.time)
-        {
-            pos = newest.pos;
-            rot = newest.rot;
-            return;
-        }
-
-        PoseSample a = newest, b = newest;
-        for (int i = poseCount - 2; i >= 0; i--)
-        {
-            b = poseBuf[i];
-            if (b.time <= tTarget)
-            {
-                a = poseBuf[i + 1];
-                break;
-            }
-            a = b;
-        }
-
-        float t = Mathf.Approximately(a.time, b.time)
-            ? 0f
-            : Mathf.InverseLerp(b.time, a.time, tTarget);
-
-        pos = Vector3.Lerp(b.pos, a.pos, t);
-        rot = Quaternion.Slerp(b.rot, a.rot, t);
-    }
+    void FixedUpdate() { }
 
     void SetIndicator(bool show)
     {
@@ -676,7 +436,8 @@ public class HandTextureDriver : MonoBehaviour
 
     void OnDrawGizmosSelected()
     {
-        if (!drawGizmos || !xrArmatureRoot) return;
+        if (!drawGizmos || !xrArmatureRoot)
+            return;
         Gizmos.color = Color.cyan;
         Gizmos.DrawWireSphere(xrArmatureRoot.position, contactProbeRadius);
     }
